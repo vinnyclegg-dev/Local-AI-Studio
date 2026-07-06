@@ -36,6 +36,18 @@ Plus a CLI (`studioctl.ps1`) and a visual control panel (`studio_gui.pyw`, with 
 
 ---
 
+## Screenshots
+
+| | |
+|---|---|
+| **Home** ![Home](docs/screenshots/01_home.png) | **Language** ![Language](docs/screenshots/02_language.png) |
+| **Story Maker** ![Story Maker](docs/screenshots/03_story_maker.png) | **Image — Generate** ![Image Generate](docs/screenshots/04_image_generate.png) |
+| **Image — Edit** ![Image Edit](docs/screenshots/05_image_edit.png) | **Music — ACE-Step** ![Music](docs/screenshots/06_music.png) |
+| **Speech → Text** ![Speech to Text](docs/screenshots/07_speech_to_text.png) | **Text → Speech** ![Text to Speech](docs/screenshots/08_text_to_speech.png) |
+| **Voice Studio — create a voice** ![Voice Studio](docs/screenshots/09_voice_studio.png) | **Audiobook** ![Audiobook](docs/screenshots/10_audiobook.png) |
+
+---
+
 ## Why local?
 
 - **Zero API cost.** Every generation — image, music, voice, chat — runs on hardware you already own. Iterate as many times as you want.
