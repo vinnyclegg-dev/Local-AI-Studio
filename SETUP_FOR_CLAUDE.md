@@ -1064,6 +1064,10 @@ Notes:
 - `lullabykit`: its own venv (torch cu129 + `demucs` + `basic-pitch[onnx]` + `pretty_midi`/`mido`/
   `soundfile`), a portable FluidSynth build, the FluidR3 GM soundfont, and the Salamander Grand Piano
   soundfont (falls back to FluidR3's GM piano if missing) — Lullaby and Track Splitter tabs, see PHASE 8.
+- Composer needs **nothing beyond PHASE 8**: `composerkit.py` runs under `lullabykit`'s existing venv
+  (numpy + soundfile, both already there) and plays the same bundled FluidR3 GM soundfont via the same
+  FluidSynth build — no separate install step. The LLM planning half reuses the Language tab's Ollama
+  model; the render half is CPU-only.
 
 **NOT used by the studio — do NOT install (these are leftovers from unrelated experiments):**
 - `qwen3.5:9b` (appears in the studio's stop-list but is never mapped to a task).
@@ -1072,6 +1076,10 @@ Notes:
   v1 checkpoint `ace_step_v1_3.5b.safetensors` — the Music tab uses the **ACE-Step 1.5 split files**
   from PHASE 5g instead.
 - FLUX.1-schnell (`flux1-schnell-fp8.safetensors`) — the studio uses FLUX.2 Klein, not schnell.
+- `sf3convert.py` (embedded alongside composerkit.py, but **not wired into any tab and not working** —
+  its own docstring: converting the 1.2GB Salamander soundfont to the compressed SF3 format produces a
+  file where every key plays the same sample, only velocity varies. Kept because the size win is large
+  and the bug looks close, but nothing in the studio calls it — don't run it expecting a usable SF3.
 
 ## Appendix B — Quick troubleshooting
 

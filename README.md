@@ -26,6 +26,7 @@ That's still the spirit of the project: give an AI (or yourself) a local set of 
 | 🎨 **Image — Generate** | Text → image (FLUX.2 Klein) | ComfyUI |
 | ✂️ **Image — Edit** | Reference-guided edit / remove / reframe / outpaint | ComfyUI |
 | 🕹️ **Sprite Studio** | One reference image → style-matched 2D game sprites: single actions or a full animation set (idle/walk/run/jump/fall/crouch/attack/hurt/death), true transparent backgrounds, per-action strips + combined sprite sheet with engine-ready JSON metadata, per-frame re-roll | ComfyUI + rembg |
+| 📊 **Composer** | A text brief → a fully arranged, mixed, multitrack instrumental. A local LLM plans the musical direction (instruments, key, tempo, structure, chords, mix, automation) from a fixed "studio" menu — General MIDI patches played by FluidSynth — then a deterministic engine (no note-level AI) writes every part, mixes each track through its own FX chain (saturation, tone shelves, tempo-synced delay, convolution reverb, automated sends), and adds production moves (risers, impacts, downlifters, drops, sidechain ducking). A 3-step wizard — **Set up** (brief/style/length/instrument count) → **Arrange** (DAW-style clip grid, per-track mix/automation, piano-roll note editing, re-render without a new LLM call) → **Export** (master MP3/WAV, multitrack MIDI, per-instrument FLAC stems). 8 genre templates mean it never fails even on a bad LLM response, and an "LLM off" mode composes from the template alone with no model load at all | Ollama (planning) + composerkit.py (CPU-only render) |
 | 🎵 **Music Generation** | Full songs & instrumentals from style tags + lyrics (ACE-Step 1.5 XL) — structure/vocal/energy lyric tags, BPM/Key/time-signature control, remix mode | ComfyUI |
 | 🎹 **Lullaby** | Any song → soft lullaby instrumental. A workbench splits the song into 6 tracks (vocals/guitar/piano/other/bass/drums) with scrubbable waveform players so you pick exactly what carries into the result, then three engines: **Remix** (default — the selected tracks are cleaned, dynamics flattened so it stays soft throughout, then ACE-Step audio-to-audio re-imagines it with lullaby tags; closely resembles the original, with denoise/softness/slowdown controls), **Piano** (melody transcribed directly from the selected tracks, key/chords detected, rebuilt as a rocking piano + music-box arrangement at 55-88bpm on the Salamander sampled grand), and **Melody Match** (traces each sung note's continuous pitch curve via FCPE — real note boundaries, no scale-snap or quantization — onto a single portamento-capable instrument: cello/violin/flute/synth voice/music box; a per-track Route selector lets some ticked stems go through Melody Match while others get a full Piano-style rebuilt arrangement in the same render, mixed together, with an optional ACE-Step polish pass afterward) | lullabykit (2-pass Demucs + basic-pitch/FCPE + librosa + FluidSynth) + ACE-Step |
 | ✂️ **Track Splitter** | Any song → its 6 individual instrument tracks (vocals/guitar/piano/other/bass/drums), each with a scrubbable player and its own download, plus a "download all" zip and a persistent library of past splits — shares its separation cache with the Lullaby tab | lullabykit (Demucs) |
@@ -48,8 +49,22 @@ Plus a CLI (`studioctl.ps1`) and a visual control panel (`studio_gui.pyw`, with 
 | **Image — Edit** ![Image Edit](docs/screenshots/05_image_edit.png) | **Music — ACE-Step** ![Music](docs/screenshots/06_music.png) |
 | **Speech → Text** ![Speech to Text](docs/screenshots/07_speech_to_text.png) | **Text → Speech** ![Text to Speech](docs/screenshots/08_text_to_speech.png) |
 | **Voice Studio — create a voice** ![Voice Studio](docs/screenshots/09_voice_studio.png) | **Audiobook** ![Audiobook](docs/screenshots/10_audiobook.png) |
-| **Sprite Studio — 2D game sprites** ![Sprite Studio](docs/screenshots/11_sprite_studio.png) | **Lullaby** ![Lullaby](docs/screenshots/12_lullaby.png) |
-| **Track Splitter** ![Track Splitter](docs/screenshots/13_track_splitter.png) | |
+
+### Sprite Studio, Lullaby & Track Splitter in detail
+
+| | |
+|---|---|
+| **Sprite Studio — single action** ![Sprite Studio single action](docs/screenshots/11_sprite_studio.png) | **Sprite Studio — full sprite set** (all 9 built-in actions selectable) ![Sprite Studio full set](docs/screenshots/11b_sprite_studio_set.png) |
+| **Lullaby — Remix engine** (default) ![Lullaby Remix](docs/screenshots/12_lullaby.png) | **Lullaby — Piano engine** ![Lullaby Piano](docs/screenshots/12b_lullaby_piano.png) |
+| **Lullaby — Melody Match engine** ![Lullaby Melody Match](docs/screenshots/12c_lullaby_melodymatch_empty.png) | **Melody Match — per-track routing** (vocals → instrument, piano → rebuilt arrangement, mixed together) ![Melody Match tracks](docs/screenshots/12d_lullaby_melodymatch_tracks.png) |
+| **Track Splitter** ![Track Splitter](docs/screenshots/13_track_splitter.png) | **Track Splitter — results** (per-track players + Play all selected) ![Track Splitter results](docs/screenshots/13b_track_splitter_results.png) |
+
+### Composer in detail
+
+| | |
+|---|---|
+| **Step 1 — Set up** (brief, style, length, sound options) ![Composer set up](docs/screenshots/14_composer_setup.png) | **Step 2 — Arrange** (clip grid: tracks × sections, real generated song) ![Composer arrange](docs/screenshots/15_composer_arrange.png) |
+| **Step 2 — track inspector** (instrument/mix/automation + piano-roll notes) ![Composer arrange inspector](docs/screenshots/15b_composer_arrange_inspector.png) | **Step 3 — Export** (master, full mix table, arrangement structure, per-instrument stems) ![Composer export](docs/screenshots/16_composer_export.png) |
 
 ---
 
@@ -95,10 +110,11 @@ For a deeper dive, see the companion docs in [`/docs`](docs/):
 
 A single Python stdlib HTTP server (`server.py`) serves the UI (`index.html`) and brokers every request to a backend:
 
-- **Ollama** — local LLM / vision
+- **Ollama** — local LLM / vision, and Composer's musical-direction planner
 - **ComfyUI** (headless git checkout) — image generation/edit, sprites, and music (sprite post-processing — rembg transparency cutout, resizing, sheet assembly — runs in `spritekit.py` under ComfyUI's venv)
 - **Conda-env worker subprocesses** — speech-to-text, text-to-speech, and voice cloning, each in its own isolated environment (their torch/transformers/setuptools requirements conflict and can't share one env)
-- **lullabykit** (self-contained under `lullabykit/`) — the Lullaby pipeline: its own venv (torch/CUDA, Demucs, basic-pitch) plus bundled FluidSynth binaries and the FluidR3 GM soundfont; runs as a transient subprocess job, not a resident worker
+- **lullabykit** (self-contained under `lullabykit/`) — the Lullaby pipeline: its own venv (torch/CUDA, Demucs, basic-pitch/FCPE) plus bundled FluidSynth binaries and the FluidR3 GM soundfont; runs as a transient subprocess job, not a resident worker
+- **composerkit.py** — Composer's arranger/mixer/renderer: deterministic, CPU-only, reuses lullabykit's venv and FluidSynth/soundfont; the LLM only plans direction, this writes every note and runs the whole mix chain
 - **koboldcpp** — long-form fiction backend for Story Maker, launched on demand
 
 The whole stack is controlled from `studioctl.ps1` (CLI) or `studio_gui.pyw` (visual control panel), which start, stop, and health-check every service.
