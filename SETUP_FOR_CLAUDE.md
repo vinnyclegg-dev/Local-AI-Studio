@@ -20,7 +20,11 @@ A local web app at **http://127.0.0.1:8800** with these tabs / features:
 | 🧠 Language | Code / research / vision prompts to a local LLM, with a 🔓 Unlocked (uncensored) option | Ollama |
 | 🎨 Image — Generate | Text→image (FLUX.2 Klein) | ComfyUI |
 | ✂️ Image — Edit | Reference-guided edit / remove / reframe / outpaint | ComfyUI |
-| 🎵 Music | Full songs & instrumentals from style tags + lyrics (**ACE-Step 1.5 XL**, hybrid planning-LM + DiT; **turbo default** for smooth vocals + speed, sft selectable for max prompt adherence). Structure/vocal/energy lyric-tag toolbar, BPM/Key/time-signature (Auto = model decides), planner creativity/guidance sliders, annotated sampler/scheduler picks, auto-retry on degenerate seeds, -1 dB peak limiting; remix mode | ComfyUI (git checkout) |
+| 🕹️ Sprite Studio | One reference image → style-matched 2D game sprites: single actions (9 built-ins with hand-written pose scripts, or a custom motion) or a full animation set (idle/walk/run/jump/fall/crouch/attack/hurt/death). True transparent backgrounds (rembg), per-action strips + combined sheet with engine-ready JSON, per-frame ↻ re-roll with automatic backups; sets persist in `sprites\` | ComfyUI (FLUX.2 ReferenceLatent) + `spritekit.py` in the ComfyUI venv |
+| 🎼 Composer | A brief → a finished, arranged, mixed instrumental, as a 3-step wizard (**Set up → Arrange → Export**). The local LLM plans the *musical direction* (instruments + role, key, tempo, section structure, chord progression per section, mix and automation moves); `composerkit.py` writes the actual notes, because note-level output from a 20B local model isn't reliable enough to listen to. Instruments come from the bundled SoundFonts played by FluidSynth — free, already on disk, and the GM bank fits the 800 MB "plugin budget"; piano tracks are routed to the sampled Salamander Grand. Every track gets its own stem and channel strip: saturation, tone shelves, a time-varying lowpass, tempo-synced ping-pong delay and convolution reverb with **automated** send levels, plus volume/pan automation, risers, sub impacts, downlifters, drop silences and kick sidechaining. A **performance pass** (within-note CC11 swells, guitar strums/piano rolls, correlated timing drift with per-role feel, drum round-robin) is what stops it sounding like MIDI. Step 2 is a DAW-style editor: clip grid per track × section, channel strips, chord/energy/FX editing, and a **piano roll** for hand-editing notes — edits re-render in place with no LLM call. Optional ACE-Step re-texture pass ships *alongside* the clean master for A/B. Outputs master MP3/WAV, per-instrument FLAC stems, multitrack MIDI with pan/volume CCs, plus `score.json` and `arrangement.md` | Ollama (planning) + `composerkit.py` (FluidSynth + numpy/scipy, CPU) |
+| 🎵 Music Generation | Full songs & instrumentals from style tags + lyrics (**ACE-Step 1.5 XL**, hybrid planning-LM + DiT; **turbo default** for smooth vocals + speed, sft selectable for max prompt adherence). Structure/vocal/energy lyric-tag toolbar, BPM/Key/time-signature (Auto = model decides), planner creativity/guidance sliders, annotated sampler/scheduler picks, auto-retry on degenerate seeds, -1 dB peak limiting; remix mode | ComfyUI (git checkout) |
+| 🎹 Lullaby | Any song → a soft lullaby instrumental. A workbench splits the song into 6 stems (vocals/guitar/piano/other/bass/drums) with scrubbable previews so you choose what carries into the result, then one of three engines: **Remix** (default — drums dropped, dynamics flattened, then ACE-Step audio2audio re-imagines it with lullaby tags at a user-set denoise; closest to the original) · **Piano** (melody transcribed + key/chords detected, rebuilt as a rocking piano + music-box arrangement at 55–88bpm on a sampled grand) · **Melody Match** (traces each sung NOTE's actual continuous pitch curve via FCPE — no scale-snap/quantization, only real note boundaries — onto a portamento-capable instrument: cello/violin/flute/synth voice/music box; per-track **Route** selector lets some ticked stems go through Melody Match while others go through a full Piano-style rebuilt arrangement in the same render, mixed together; optional ACE-Step polish pass on the result) | `lullabykit` (2-pass Demucs + basic-pitch/FCPE + librosa + FluidSynth) + ACE-Step |
+| ✂️ Track Splitter | Any song → its 6 individual instrument tracks (vocals/guitar/piano/other/bass/drums), each with its own scrubbable player and download, a "download all" zip, and a persistent library of past splits — shares its separation cache with the Lullaby tab | `lullabykit` (Demucs) |
 | 🎙️ Speech → Text | Transcribe audio | NeMo Parakeet (conda env) |
 | 🔊 Text → Speech | Narration (Kokoro) and voice-cloning (Chatterbox) | conda envs |
 | 🗣️ Voice Studio | Fine-tune & reuse a personal XTTS-v2 voice | conda env |
@@ -36,9 +40,10 @@ start / stop / monitor the whole stack (Ollama + ComfyUI + the studio server), a
 - **OS:** Windows 10/11 (the control tools, conda envs and install paths assume Windows).
 - **GPU:** an NVIDIA GPU with a current driver. **~16 GB VRAM** is the design target. The studio loads
   **one heavy model at a time** — this is by design, never run two large models concurrently.
-- **Disk:** ~**90 GB** free for the required model set (~**110 GB** with the optional uncensored image
+- **Disk:** ~**95 GB** free for the required model set (~**115 GB** with the optional uncensored image
   model and Unlocked LLM). The largest items: ACE-Step 1.5 files ~20 GB, gpt-oss:20b ~14 GB,
-  Cydonia GGUF ~13 GB, FLUX.2 Klein ~12 GB, ComfyUI venv ~8 GB.
+  Cydonia GGUF ~13 GB, FLUX.2 Klein ~12 GB, ComfyUI venv ~8 GB, `lullabykit` ~5 GB (its own
+  torch/Demucs/basic-pitch venv + bundled FluidSynth + soundfonts).
 - **Paths are portable.** Everywhere below, `%USERPROFILE%` is the current user's home
   (PowerShell: `$HOME`). Never hard-code another machine's user folder.
 - **Idempotent.** Every step is gated on a check — re-running this runbook must not damage an existing
@@ -97,6 +102,9 @@ $dirs = @(
   "$HOME\local-ai-studio\logs",
   "$HOME\local-ai-studio\voices",
   "$HOME\local-ai-studio\stories",
+  "$HOME\local-ai-studio\sprites",
+  "$HOME\local-ai-studio\compositions",
+  "$HOME\local-ai-studio\lullabykit",
   "$HOME\.claude\skills\local-llm\scripts",
   "$HOME\.claude\skills\local-image\scripts",
   "$HOME\.claude\skills\local-stt\scripts",
@@ -109,7 +117,7 @@ $dirs | ForEach-Object { New-Item -ItemType Directory -Force -Path $_ | Out-Null
 ```
 
 Now write each embedded file (use the Write tool; create parent folders if needed). The complete list is
-in *EMBEDDED SOURCE FILES* — 23 files in total.
+in *EMBEDDED SOURCE FILES* — 27 files in total.
 
 ---
 
@@ -164,6 +172,7 @@ $venvPy = "$comfyCode\.venv\Scripts\python.exe"
 & $venvPy -m pip install --upgrade pip
 & $venvPy -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu129
 & $venvPy -m pip install -r "$comfyCode\requirements.txt"
+& $venvPy -m pip install rembg onnxruntime   # Sprite Studio: transparent-background cutout (spritekit.py)
 ```
 
 The custom nodes load on the next ComfyUI start (Phase 6 launches it). Models go in Phase 5.
@@ -361,19 +370,6 @@ curl.exe -L -o "$M\text_encoders\qwen_4b_ace15.safetensors" "$repo/text_encoders
 curl.exe -L -o "$M\vae\ace_1.5_vae.safetensors" "$repo/vae/ace_1.5_vae.safetensors"
 ```
 
-The graph is built by `musicgen.py` (embedded below) against ComfyUI's native ACE-Step 1.5 nodes plus
-the studio's `ace15_studio_encode.py` custom node (optional bpm/key/timesignature — empty lets the
-planning LM decide; the LM's audio-codes pass is most of the quality and stays ON for text-to-music).
-Per-variant defaults follow the official templates (turbo: 8 steps / cfg 1 · sft: 50 / 7; both
-euler/simple, AuraFlow shift 3). musicgen.py also auto-rerolls rare degenerate seeds (near-silent LM
-collapse) and applies a **−1 dBFS peak limiter** when a render crests above −1 dB (raw decodes can hit
-~0 dBFS, which sounds harsh/crackly on loud vocals — the official ACE-Step Playground normalizes the
-same way). Generated tracks are fetched into RAM and the file is removed from ComfyUI's `output/` dir;
-the browser's **Save track** button is the only way a track is kept. Remix sources staged into
-ComfyUI's `input/` (prefix `music_`) are swept when the music worker is stopped.
-
----
-
 ## PHASE 6 — Launch & verify
 
 ```powershell
@@ -388,16 +384,20 @@ powershell -ExecutionPolicy Bypass -File "$HOME\local-ai-studio\studioctl.ps1" s
 Then open **http://127.0.0.1:8800** and smoke-test each tab:
 1. **Language** → Load → ask "say hello" (returns text).
 2. **Image — Generate** → Load → 1 step, any prompt (returns an image).
-3. **Text → Speech** → Load (Kokoro) → speak a line; then **Speech → Text** → Load → transcribe that wav.
-4. **Voice Studio** loads without error.
-5. **Story Maker** → **Load story model** (koboldcpp + Cydonia-24B; ~40s, frees other models) →
+3. **Sprites** → with the image model still loaded from step 2: drop in any character image,
+   **Single action** → idle, frame size 256, Generate → 4 frames render one-by-one with live
+   progress, then get transparent backgrounds + an `idle_sheet.png` strip (checkerboard behind the
+   thumbs proves real alpha). Files land in `local-ai-studio\sprites\<set>\`.
+4. **Text → Speech** → Load (Kokoro) → speak a line; then **Speech → Text** → Load → transcribe that wav.
+5. **Voice Studio** loads without error.
+6. **Story Maker** → **Load story model** (koboldcpp + Cydonia-24B; ~40s, frees other models) →
    Open a story → **Generate** writes chapter-by-chapter. Verify `:5001` answers:
    `(Invoke-WebRequest http://127.0.0.1:5001/api/v1/model -UseBasicParsing).StatusCode` (200).
-6. **Music** → Load (warms ACE-Step 1.5 into VRAM) → add a style tag, tick **Instrumental**,
+7. **Music** → Load (warms ACE-Step 1.5 into VRAM) → add a style tag, tick **Instrumental**,
    set duration to 0:30 → Generate (~30–90 s) → an audio player appears (save via **⬇ Save track**).
    **Verify the track is audibly music, not near-silence** — musicgen.py auto-rerolls degenerate
    seeds, but a levels check (`ffmpeg -af volumedetect`: mean should be ≳ −25 dB) proves the chain.
-7. **Audiobook** → with Kokoro still loaded from step 3, paste two short paragraphs → Render →
+8. **Audiobook** → with Kokoro still loaded from step 4, paste two short paragraphs → Render →
    chapter MP3 plays with natural sentence/paragraph pauses.
 
 The visual control panel is **`Studio Control Panel.vbs`** (double-click — launches with no console
@@ -408,7 +408,7 @@ live status lights / GPU bar.
 
 For one-click launch, create a Desktop shortcut to the visual control panel. This is idempotent — skip
 if the shortcut and icon already exist and are healthy. `studio.ico` is embedded below as base64 (it's a
-binary asset, so it isn't one of the 23 text source files in *EMBEDDED SOURCE FILES*); decode it once,
+binary asset, so it isn't one of the text source files in *EMBEDDED SOURCE FILES*); decode it once,
 then create the `.lnk`:
 
 ```powershell
@@ -913,6 +913,136 @@ powershell -ExecutionPolicy Bypass -File "$HOME\local-ai-studio\studioctl.ps1" s
 
 ---
 
+## PHASE 8 — Lullaby Studio kit (song → soft-piano lullaby)
+
+The Lullaby tab needs its self-contained kit at `%USERPROFILE%\local-ai-studio\lullabykit\`:
+the pipeline script (embedded above as `lullabykit\pipeline.py`), a private venv, bundled
+FluidSynth binaries, and the FluidR3 GM soundfont. Nothing installs system-wide.
+
+```powershell
+$KIT = "$HOME\local-ai-studio\lullabykit"
+New-Item -ItemType Directory -Force "$KIT\bin", "$KIT\soundfonts", "$KIT\output", "$KIT\work" | Out-Null
+
+# 1) venv + Python deps (CUDA 12.9 torch; ~3.5GB download)
+python -m venv "$KIT\.venv"
+& "$KIT\.venv\Scripts\python.exe" -m pip install --upgrade pip
+& "$KIT\.venv\Scripts\python.exe" -m pip install torch --index-url https://download.pytorch.org/whl/cu129
+& "$KIT\.venv\Scripts\python.exe" -m pip install demucs pretty_midi mido soundfile "basic-pitch[onnx]" torchfcpe
+
+# 1b) torchaudio shim (melody-match engine): torchfcpe's only torchaudio dependency is
+#     transforms.Resample, but the only torchaudio wheel published for this torch build
+#     (2.9.0+cu129) is 2.8.0+cu129 — a mismatched ABI whose compiled extension fails to
+#     load. Rather than downgrade torch, drop in a local package that satisfies the one
+#     import with a librosa-backed Resample and skips the real torchaudio wheel entirely.
+$TA = "$KIT\.venv\Lib\site-packages\torchaudio"
+New-Item -ItemType Directory -Force $TA | Out-Null
+Set-Content "$TA\__init__.py" @'
+"""Local shim: torchfcpe only needs torchaudio.transforms.Resample; the real
+wheel available for this torch build has an incompatible compiled extension."""
+'@
+Set-Content "$TA\transforms.py" @'
+import numpy as np, torch, torch.nn as nn, librosa
+
+class Resample(nn.Module):
+    def __init__(self, orig_freq, new_freq, lowpass_filter_width=64, **_ignored):
+        super().__init__()
+        self.orig_freq, self.new_freq = int(orig_freq), int(new_freq)
+
+    def forward(self, waveform: torch.Tensor) -> torch.Tensor:
+        if self.orig_freq == self.new_freq:
+            return waveform
+        device, dtype = waveform.device, waveform.dtype
+        arr = waveform.detach().cpu().numpy().astype(np.float32)
+        flat = arr.reshape(-1, arr.shape[-1])
+        out = np.stack([librosa.resample(row, orig_sr=self.orig_freq,
+                        target_sr=self.new_freq, res_type="soxr_hq") for row in flat])
+        out = out.reshape(*arr.shape[:-1], out.shape[-1])
+        return torch.from_numpy(out).to(device=device, dtype=dtype)
+'@
+
+# 2) FluidSynth (portable Windows build, unzipped in place)
+Invoke-WebRequest -Uri "https://github.com/FluidSynth/fluidsynth/releases/download/v2.4.7/fluidsynth-2.4.7-win10-x64.zip" -OutFile "$KIT\bin\fluidsynth.zip"
+Expand-Archive "$KIT\bin\fluidsynth.zip" "$KIT\bin\fluidsynth" -Force; Remove-Item "$KIT\bin\fluidsynth.zip"
+
+# 3) FluidR3 GM soundfont (~148MB; used for the music-box / string-pad layers)
+Invoke-WebRequest -Uri "https://github.com/pianobooster/fluid-soundfont/releases/download/v3.1/FluidR3_GM.sf2" -OutFile "$KIT\soundfonts\FluidR3_GM.sf2"
+
+# 4) Salamander Grand Piano SF2 (~296MB download / 1.2GB extracted; CC-BY, real
+#    sampled Yamaha C5, 16 velocity layers — this is the main piano sound. The
+#    pipeline falls back to FluidR3's GM piano if it's missing.)
+Invoke-WebRequest -Uri "https://freepats.zenvoid.org/Piano/SalamanderGrandPiano/SalamanderGrandPiano-SF2-V3+20200602.tar.xz" -OutFile "$KIT\soundfonts\salamander.tar.xz"
+tar -xf "$KIT\soundfonts\salamander.tar.xz" -C "$KIT\soundfonts"; Remove-Item "$KIT\soundfonts\salamander.tar.xz"
+
+# 5) smoke test (any local song/video file; writes <name>_lullaby.wav under lullabykit\output)
+& "$KIT\.venv\Scripts\python.exe" "$KIT\pipeline.py" "C:\path\to\some\song.mp3"
+```
+
+Notes:
+- The Lullaby tab has **three engines**, selected in the UI:
+  - **Remix (default)** — closest to the original song. `LullabyJob` runs the
+    pipeline through its `mix` stage only (`--until-stage mix`: extract → Demucs →
+    drum-free stem mix), flattens the mix's dynamics with slow heavy compression
+    (`REMIX_FLATTEN` — this is what keeps the loud second half of a song from
+    dragging the lullaby with it; measured: +14dB energy rise without it, +0dB
+    with), then ACE-Step audio2audio re-imagines it (turbo, lullaby tags,
+    denoise 0.45-0.75 from the UI slider, default 0.55), and a soft mastering
+    chain (`REMIX_MASTER`: -4dB high shelf, 10kHz lowpass, loudnorm -17 LUFS
+    LRA 6, long fades) finishes it. Note: including the vocal stem here
+    deliberately low-pass-filters it at 3.2kHz first (strips consonants/sibilance
+    so ACE's regeneration doesn't produce "ghost vocal" artifacts) — selecting
+    vocals-only won't sound like a clear melody, by design.
+  - **Piano** — the symbolic v2 arrangement engine described below.
+  - **Melody Match** — for when Piano's scale-snap + eighth-grid quantization
+    mangles a florid or heavily-ornamented vocal line into something
+    unrecognizable (measured on a real case: -0.03 F0 correlation with the
+    original vocal — essentially unrelated). Traces the singer's actual
+    continuous pitch curve with **FCPE** (`torchfcpe`, ~10ms resolution), then
+    **segments it into distinct notes** (a rolling-median smoothing + rounded-
+    semitone run detection, with sub-80ms runs merged into whichever neighbor
+    is closer in pitch — this matters: an earlier version bent through an
+    entire silence-delimited phrase as ONE note, which sounds like a siren/
+    theremin wail, not a melody) — each note gets its own MIDI note-on, with
+    only the small residual deviation (vibrato, slight scoop) carried as
+    pitch-bend (±4 semitones). Plays back on one **portamento-capable**
+    instrument (cello default, or violin/flute/synth voice/music box) — a
+    fixed-pitch instrument like piano can't glide between notes at all, which
+    literature backs as the wrong vehicle for tracing a vocal line. Round-trip
+    validated (re-extract F0 from the render, correlate against the original
+    vocal) at 0.91-0.99 correlation across two real songs away from note
+    attacks, vs. Piano's -0.03 to ~0.6 on material it struggles with.
+    **Per-track routing**: each ticked Tracks-panel stem has its own Route
+    selector — `melody` stems are mixed together and traced onto the chosen
+    instrument; `arranged` stems instead run through Piano's own
+    transcribe+arrange pipeline (rebuilt, quantized) — e.g. vocals traced
+    faithfully on cello while an existing piano part gets a proper rebuilt
+    accompaniment, then both mixed into one render (`arrange()`'s bpm clamp is
+    skipped for the arranged half here so it scales by the same tempo_scale
+    as the traced half, rather than drifting apart over a long song). An
+    optional ACE-Step polish pass (same mechanism as Piano's) can run over the
+    combined result afterward.
+- Pipeline stages (v2, the "musical arrangement engine"): ffmpeg audio extract →
+  Demucs stem separation (GPU, transient) → music analysis (librosa beat grid + bar
+  phase, Krumhansl-Schmuckler key detection, per-bar diatonic chord recognition via
+  chroma template matching with a bass-stem root prior) + vocal-stem melody
+  transcription (basic-pitch; falls back to the 'other' stem for instrumentals) →
+  arrangement rebuilt on a clean grid at 55-88bpm (melody cleaned: monophony,
+  octave-jump repair, scale snapping, eighth-note quantization, phrase-shaped
+  velocities; rocking broken-chord left hand; music-box doubling; optional string
+  pad; per-bar sustain pedal) → dual FluidSynth render (Salamander piano + FluidR3
+  layers, large-room reverb) → ffmpeg master (shelf EQ, compression, loudnorm -16
+  LUFS, 44.1kHz, long fades).
+- The server runs it via `LullabyJob` (`/api/lullaby_start`, `/api/lullaby_status`,
+  outputs served from `/lullabies/`). It refuses to start while a studio model is
+  loaded — the GPU must be free for Demucs.
+- Optional **ACE-Step polish** (experimental, OFF by default): after the render, the
+  job loads the music worker and runs the result through ACE-Step audio2audio with
+  lullaby tags, then re-normalizes loudness. Testing showed ACE conditions poorly on
+  sparse solo-piano input (near-zero crest factor, harmony drifts off the arrangement
+  at any denoise, both turbo and sft) — it works well on full-band songs, so the
+  toggle is kept for experimentation. Failures are non-fatal (the clean render ships).
+
+---
+
 ## Appendix A — Required vs. NOT-used models
 
 **REQUIRED (install these):**
@@ -929,6 +1059,11 @@ powershell -ExecutionPolicy Bypass -File "$HOME\local-ai-studio\studioctl.ps1" s
 - ComfyUI: ACE-Step 1.5 split files (`acestep_v1.5_xl_turbo_bf16` [default] +
   `acestep_v1.5_xl_sft_bf16` + `qwen_0.6b_ace15` + `qwen_4b_ace15` + `ace_1.5_vae`) — Music tab,
   see PHASE 5g.
+- ComfyUI venv pips: `rembg` + `onnxruntime` (Sprite Studio transparency — installed in PHASE 4;
+  rembg's `u2net` weights auto-download to `%USERPROFILE%\.u2net` on first cutout).
+- `lullabykit`: its own venv (torch cu129 + `demucs` + `basic-pitch[onnx]` + `pretty_midi`/`mido`/
+  `soundfile`), a portable FluidSynth build, the FluidR3 GM soundfont, and the Salamander Grand Piano
+  soundfont (falls back to FluidR3's GM piano if missing) — Lullaby and Track Splitter tabs, see PHASE 8.
 
 **NOT used by the studio — do NOT install (these are leftovers from unrelated experiments):**
 - `qwen3.5:9b` (appears in the studio's stop-list but is never mapped to a task).
@@ -961,9 +1096,9 @@ powershell -ExecutionPolicy Bypass -File "$HOME\local-ai-studio\studioctl.ps1" s
 # EMBEDDED SOURCE FILES
 
 Below is the complete source of every program in the stack. For each, **create the file at the exact path
-in its heading** and paste its contents verbatim (strip nothing). There are 23 files.
+in its heading** and paste its contents verbatim (strip nothing). There are 27 files.
 
-## File 1 of 23 — `%USERPROFILE%\local-ai-studio\server.py`
+## File 1 of 27 — `%USERPROFILE%\local-ai-studio\server.py`
 
 ```python
 #!/usr/bin/env python3
@@ -1090,6 +1225,41 @@ os.makedirs(AUDIOBOOKS, exist_ok=True)
 # Reference-clip library for cloning engines (Zonos/Chatterbox) — drop wav/mp3 clips here.
 REFS = os.path.join(HERE, "refs")
 os.makedirs(REFS, exist_ok=True)
+
+# ---- Lullaby Studio (song -> soft solo-piano lullaby instrumental) -------------
+# Self-contained kit under lullabykit/: its own venv (torch/demucs/basic-pitch),
+# bundled FluidSynth + FluidR3 soundfont. The pipeline is a transient GPU job
+# (demucs runs for ~30s then frees VRAM), not a resident worker.
+LULLABYKIT = os.path.join(HERE, "lullabykit")
+LULLABY_PY = os.path.join(LULLABYKIT, ".venv", "Scripts", "python.exe")
+LULLABY_PIPELINE = os.path.join(LULLABYKIT, "pipeline.py")
+LULLABIES = os.path.join(HERE, "lullabies")
+os.makedirs(LULLABIES, exist_ok=True)
+
+# ---- Composer (brief -> arranged, mixed, automated instrumental) --------------
+# The LLM plans (instruments, structure, chords, FX, automation); composerkit.py
+# writes the notes and does the mixing. It runs under lullabykit's venv, which
+# already has numpy/scipy/soundfile/pretty_midi plus the bundled FluidSynth and
+# the FluidR3 GM soundfont — the "plugin library" the planner picks from. No GPU
+# is involved in the render, so it can't collide with a resident model.
+COMPOSERKIT = os.path.join(HERE, "composerkit.py")
+COMPOSITIONS = os.path.join(HERE, "compositions")
+os.makedirs(COMPOSITIONS, exist_ok=True)
+
+# ---- Sprite Studio (2D game sprites from one reference image) -----------------
+# Every frame is a FLUX.2 Klein reference-edit (gen.py --image): the uploaded art is
+# chained through ReferenceLatent, which is what keeps character/style consistent
+# across frames. Post-processing (rembg transparent cutout, resize, strip + combined
+# sheets) runs in spritekit.py under ComfyUI's venv python (has Pillow; rembg optional).
+SPRITES = os.path.join(HERE, "sprites")
+os.makedirs(SPRITES, exist_ok=True)
+SPRITEKIT = os.path.join(HERE, "spritekit.py")
+# ComfyUI's venv python (canonical: the comfyui-src runtime checkout; some installs
+# also carry a venv in the Documents data dir — accept either).
+COMFY_PY = os.environ.get("COMFYUI_PY") or next(
+    (p for p in (os.path.join(HOME, "comfyui-src", ".venv", "Scripts", "python.exe"),
+                 os.path.join(HOME, "Documents", "ComfyUI", ".venv", "Scripts", "python.exe"))
+     if os.path.isfile(p)), "python")
 # Zonos (optional, max-quality expressive TTS) runs in its own conda env and needs the
 # espeak-ng phonemizer backend.
 ZONOS_PY = os.path.join(ENVS, "zonos", "python.exe")
@@ -2574,6 +2744,1542 @@ class AudiobookJob:
 AUDIOBOOKJOB = AudiobookJob()
 
 
+class LullabyJob:
+    """Async lullaby job, two engines:
+
+    remix (default) — the recipe the ear tests picked: demucs drops the drums,
+    the stem mix gets its dynamics flattened (so the loud second half can't drag
+    the lullaby with it), then ACE-Step audio2audio re-imagines it with lullaby
+    tags at moderate denoise, and a soft mastering chain keeps it gentle
+    throughout. Closely resembles the original song.
+
+    piano — the symbolic engine in lullabykit/pipeline.py: vocal melody
+    transcription + key/chord detection, rebuilt as a rocking piano + music-box
+    arrangement at 55-88 bpm, rendered with the Salamander grand.
+
+    Mirrors AudiobookJob's lifecycle; pipeline progress comes from its
+    "== N/6 ... ==" stage markers."""
+
+    STAGE_LABELS = {1: "extracting audio", 2: "separating stems (GPU)",
+                    3: "mixing stems", 4: "analyzing key/beats/chords + melody",
+                    5: "arranging", 6: "rendering + mastering"}
+    # melody-match has no transcribe/arrange stages of its own (no scale-snap,
+    # no grid quantize — it traces the continuous pitch curve directly), so
+    # its "== N/6 ..." markers land on different steps than the arranged engine
+    MELODY_MATCH_LABELS = {1: "extracting audio", 2: "separating stems (GPU)",
+                           3: "mixing stems", 4: "tracking pitch (FCPE) + rendering",
+                           6: "mastering"}
+
+    CONTINUOUS_INSTRUMENTS = ("cello", "violin", "flute", "synth_voice", "music_box")
+
+    POLISH_TAGS = ("lullaby, solo piano, music box, celesta, gentle, calm, dreamy, "
+                   "bedtime, instrumental, slow tempo, quiet, warm, soothing, "
+                   "sleep music, soft, no drums, no vocals")
+
+    # fallback for the Piano engine when the user renders without ever
+    # touching the Tracks panel sliders (mirrors pipeline.py's default)
+    DEFAULT_STEM_WEIGHTS = {"vocals": 1.0, "guitar": 1.0, "piano": 1.0,
+                            "other": 1.0, "bass": 0.0, "drums": 0.0}
+
+    REMIX_TAGS = ("lullaby, very soft felt piano, music box, hushed, delicate, "
+                  "sparse, minimal, gentle, calm, dreamy, bedtime, instrumental, "
+                  "slow tempo, very quiet, warm, soothing, sleep music for babies, "
+                  "pianissimo, no drums, no vocals, no bass")
+    REMIX_FLATTEN = ("acompressor=threshold=0.08:ratio=6:attack=150:release=900:"
+                     "makeup=1.3,loudnorm=I=-20:TP=-2:LRA=4")
+    # linear loudnorm: dynamic mode rides gain up in the quiet outro and
+    # amplifies end-of-track artifacts
+    REMIX_MASTER = ("highshelf=f=3800:g=-6,lowpass=f=7000,"
+                    "loudnorm=I=-21:TP=-2:LRA=5:linear=true,"
+                    "afade=t=in:d=3,areverse,afade=t=in:d=10,areverse")
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self._reset()
+
+    def _reset(self):
+        self.state = "idle"; self.step = 0; self.total = 6
+        self.message = ""; self.current = ""; self.name = None; self.files = []
+        self.phase = ""
+
+    def status(self) -> dict:
+        return {"state": self.state, "step": self.step, "total": self.total,
+                "message": self.message, "current": self.current,
+                "name": self.name, "files": self.files, "phase": self.phase}
+
+    def _begin(self, params: dict, need_audio: bool = True):
+        """Shared validation + upload staging. Caller holds self.lock."""
+        if self.state == "running":
+            raise RuntimeError("a lullaby job is already running — wait for it to finish")
+        if MGR.key:
+            raise RuntimeError("stop the loaded model first — Lullaby runs its own engine "
+                               "and needs the GPU")
+        if not os.path.isfile(LULLABY_PY):
+            raise RuntimeError("lullabykit is not installed (lullabykit/.venv missing)")
+        if need_audio:
+            audio = params.get("audio") or ""
+            if not audio:
+                raise RuntimeError("upload a song first")
+            name = _safe_name(os.path.splitext(params.get("filename") or "song")[0]) or "song"
+            ext = os.path.splitext(params.get("filename") or "")[1].lower() or ".mp3"
+            src = os.path.join(TMP, f"lullaby_src_{name}{ext}")
+            with open(src, "wb") as f:
+                f.write(base64.b64decode(audio.split(",")[-1]))
+        else:
+            name = _safe_name(params.get("name") or "")
+            if not name:
+                raise RuntimeError("no song name given")
+            # dummy path: cached-stage runs never read the source file, the
+            # pipeline only derives its work dir from the basename
+            src = os.path.join(TMP, f"lullaby_src_{name}.mp3")
+        self._reset()
+        self.state = "running"; self.name = name
+        self._src = src
+
+    def _knobs(self, params: dict):
+        self._mode = params.get("mode", "remix")
+        self._tempo = min(0.95, max(0.5, float(params.get("tempo", 0.72))))
+        self._denoise = min(0.75, max(0.45, float(params.get("denoise", 0.60))))
+        self._slowdown = min(1.0, max(0.8, float(params.get("slowdown", 1.0))))
+        self._melody = params.get("melody", "auto")
+        if self._melody not in ("auto", "vocals", "instruments", "vocals_other"):
+            self._melody = "auto"
+        self._focus = params.get("focus", "both")
+        if self._focus not in ("both", "vocals", "instruments"):
+            self._focus = "both"
+        self._instrument = params.get("instrument", "cello")
+        if self._instrument not in self.CONTINUOUS_INSTRUMENTS:
+            self._instrument = "cello"
+        # multitrack workbench: per-stem levels chosen by the user
+        stems = params.get("stems")
+        self._stems = None
+        if isinstance(stems, dict) and stems:
+            self._stems = {k: min(1.5, max(0.0, float(v)))
+                           for k, v in stems.items()
+                           if k in ("vocals", "guitar", "piano", "other", "bass", "drums")}
+        # melody-match only: stems routed to the arranged (transcribe+quantize+
+        # piano) pipeline instead of the solo instrument — e.g. vocals traced
+        # on cello via `stems` above while an existing piano part is rebuilt
+        # as a full arrangement via this, mixed together in one render
+        arranged_stems = params.get("arranged_stems")
+        self._arranged_stems = None
+        if isinstance(arranged_stems, dict) and arranged_stems:
+            self._arranged_stems = {k: min(1.5, max(0.0, float(v)))
+                                    for k, v in arranged_stems.items()
+                                    if k in ("vocals", "guitar", "piano", "other", "bass", "drums")}
+        # ACE-Step a2a conditions poorly on sparse solo-piano/instrument input
+        # — default OFF
+        self._polish = (self._mode in ("piano", "melody-match")
+                       and bool(params.get("polish", False)))
+        if self._polish:
+            self.total = 7   # extra ACE-Step polish stage
+
+    def start(self, params: dict) -> dict:
+        """One-shot: full pipeline + render in a single job (legacy path)."""
+        with self.lock:
+            self._begin(params)
+            self._knobs(params)
+            self.phase = "full"
+        threading.Thread(target=self._run, daemon=True).start()
+        return self.status()
+
+    def analyze(self, params: dict) -> dict:
+        """Workbench phase 1: stems, key/beats/chords, BOTH melody candidates
+        (scores + piano-roll notes + audition previews), remix input, waveform.
+        Everything cached so phase-2 renders are fast."""
+        with self.lock:
+            self._begin(params)
+            self.phase = "analyze"
+            self.total = 4
+        threading.Thread(target=self._run_analyze, daemon=True).start()
+        return self.status()
+
+    def render(self, params: dict) -> dict:
+        """Workbench phase 2: render from the cached analysis with the user's
+        choices (engine, melody source, focus, denoise, tempo...)."""
+        with self.lock:
+            self._begin(params, need_audio=False)
+            workdir = os.path.join(LULLABYKIT, "work", f"lullaby_src_{self.name}")
+            if not os.path.isfile(os.path.join(workdir, "analysis.json")):
+                self._reset()
+                raise RuntimeError("analyze the song first")
+            self._knobs(params)
+            self.phase = "render"
+        threading.Thread(target=self._run_render, daemon=True).start()
+        return self.status()
+
+    def _pipeline(self, extra: list) -> list:
+        """Run lullabykit/pipeline.py streaming its stage markers into status."""
+        env = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8",
+                   PYTHONUNBUFFERED="1")
+        p = subprocess.Popen([LULLABY_PY, LULLABY_PIPELINE, self._src, *extra],
+                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                             text=True, encoding="utf-8", errors="replace", env=env,
+                             bufsize=1, **NOWIN)
+        tail = []
+        for line in p.stdout:
+            line = line.strip()
+            if not line:
+                continue
+            tail.append(line); tail[:] = tail[-30:]
+            m = re.match(r"^== (\d)/6 ", line)
+            if m:
+                self.step = int(m.group(1))
+                labels = (self.MELODY_MATCH_LABELS
+                         if getattr(self, "_mode", None) == "melody-match"
+                         else self.STAGE_LABELS)
+                self.current = labels.get(self.step, line)
+        p.wait()
+        if p.returncode != 0:
+            raise RuntimeError("pipeline failed: " + " | ".join(tail[-4:]))
+        return tail
+
+    def _remix(self, outbase: str, from_cache: bool = False) -> list:
+        """ACE-Step remix engine: stems 1-3 via the pipeline, then flatten ->
+        audio2audio -> soft master. Returns output files. from_cache rebuilds
+        only the remix input (with the chosen focus) from already-separated
+        stems — the fast path after a workbench analyze."""
+        pre = ["--until-stage", "mix", "--remix-prep", "--remix-focus", self._focus]
+        if self._stems:
+            pre += ["--stem-weights", json.dumps(self._stems)]
+        if from_cache:
+            pre = ["--from-stage", "mix"] + pre
+        self._pipeline(pre)
+        stem = os.path.splitext(os.path.basename(self._src))[0]
+        # remix_input.wav: vocals+other only, HPSS harmonic-only (drops the riser
+        # sweeps / cymbal swells ACE renders as artifacts in buildups), tail
+        # trimmed + faded so the model never sees the messy outro
+        rin = os.path.join(LULLABYKIT, "work", stem, "remix_input.wav")
+        if not os.path.isfile(rin):
+            raise RuntimeError("remix input missing after separation")
+
+        self.step, self.current = 4, "softening dynamics"
+        soften = self.REMIX_FLATTEN
+        if self._slowdown < 0.999:
+            soften += f",atempo={self._slowdown}"
+        flat = os.path.join(TMP, "lullaby_flat.wav")
+        rc, _, err = _run([_ffmpeg(), "-y", "-i", rin, "-af", soften,
+                           "-ar", "44100", flat], timeout=600)
+        if rc != 0:
+            raise RuntimeError("flatten failed: " + err[-200:])
+
+        self.step, self.current = 5, "re-imagining with ACE-Step"
+        raw = outbase + "_raw.flac"
+        try:
+            MGR.load("music", {})
+            cmd = [sys.executable, MUSIC, "--out", raw, "--tags", self.REMIX_TAGS,
+                   "--model", "turbo", "--audio", flat,
+                   "--denoise", str(self._denoise), "--format", "flac"]
+            rc, sout, err = _run(cmd, timeout=1800)
+            if rc != 0 or not os.path.isfile(raw):
+                raise RuntimeError(err or sout or "remix failed")
+        finally:
+            try:
+                MGR.stop()
+            except Exception:
+                pass
+
+        self.step, self.current = 6, "soft mastering"
+        mp3, wav = outbase + ".mp3", outbase + ".wav"
+        for dst, enc in ((mp3, ["-c:a", "libmp3lame", "-b:a", "192k"]),
+                         (wav, [])):
+            rc, _, err = _run([_ffmpeg(), "-y", "-i", raw, "-af", self.REMIX_MASTER,
+                               "-ar", "44100", *enc, dst], timeout=600)
+            if rc != 0:
+                raise RuntimeError("master failed: " + err[-200:])
+        os.remove(raw)
+        try:
+            os.remove(flat)
+        except Exception:
+            pass
+        return [mp3, wav]
+
+    def _melody_match(self, outbase: str, from_cache: bool = False) -> list:
+        """melody-match engine: traces the singer's actual continuous pitch
+        curve (FCPE, no scale-snap / no grid quantize) on a single
+        portamento-capable instrument — see pipeline.py's module docstring."""
+        pre = ["--engine", "melody-match", "--continuous-instrument", self._instrument,
+               "--tempo-scale", str(self._tempo)]
+        if self._stems:
+            pre += ["--melody-stems", json.dumps(self._stems)]
+        if self._arranged_stems:
+            pre += ["--arranged-stems", json.dumps(self._arranged_stems)]
+        if from_cache:
+            pre = ["--from-stage", "mix"] + pre
+        self._pipeline([*pre, "--out", outbase])
+        return [outbase + ".mp3", outbase + ".wav"]
+
+    def _outbase(self) -> str:
+        outdir = os.path.join(LULLABIES, self.name)
+        os.makedirs(outdir, exist_ok=True)
+        return os.path.join(outdir, f"{self.name}_lullaby")
+
+    def _run_analyze(self):
+        try:
+            with MGR.lock:
+                self._pipeline(["--until-stage", "transcribe", "--remix-prep",
+                                "--analysis-extras"])
+            self.step = self.total
+            self.state = "done"
+            self.message = "analysis ready — pick a melody and an engine, then render"
+        except Exception as e:
+            self.state, self.message = "error", str(e)
+        finally:
+            try:
+                os.remove(self._src)
+            except Exception:
+                pass
+
+    def _run_render(self):
+        try:
+            with MGR.lock:
+                outbase = self._outbase()
+                if self._mode == "remix":
+                    files = self._remix(outbase, from_cache=True)
+                elif self._mode == "melody-match":
+                    files = self._melody_match(outbase, from_cache=True)
+                    files = self._apply_polish(outbase, files)
+                else:
+                    # the Tracks panel selection IS the melody source — re-run
+                    # transcription from whatever the user ticked/weighted
+                    # (stems/separation stay cached; only transcribe+arrange+
+                    # render re-run, so this is fast even though it "restarts"
+                    # from an earlier stage than the remix engine does)
+                    stems = self._stems or self.DEFAULT_STEM_WEIGHTS
+                    self._pipeline(["--from-stage", "transcribe",
+                                    "--melody-stems", json.dumps(stems),
+                                    "--tempo-scale", str(self._tempo),
+                                    "--out", outbase])
+                    files = self._finish_piano(outbase)
+                    files = self._apply_polish(outbase, files)
+                self.files = [os.path.relpath(f, LULLABIES).replace("\\", "/")
+                              for f in files]
+                self.step = self.total
+            self.state, self.message = "done", "lullaby complete " + (self.message or "")
+        except Exception as e:
+            self.state, self.message = "error", str(e)
+
+    def _finish_piano(self, outbase: str) -> list:
+        """mp3-encode the piano render (+ optional experimental ACE polish)."""
+        wav = outbase + ".wav"
+        if not os.path.isfile(wav):
+            raise RuntimeError("pipeline produced no audio")
+        mp3 = outbase + ".mp3"
+        rc, _, err = _run([_ffmpeg(), "-y", "-i", wav, "-codec:a", "libmp3lame",
+                           "-b:a", "192k", mp3], timeout=300)
+        if rc != 0:
+            raise RuntimeError("mp3 encode failed: " + err[-300:])
+        return [mp3, wav]
+
+    def _run(self):
+        try:
+            with MGR.lock:
+                outbase = self._outbase()
+
+                if self._mode == "remix":
+                    self.files = [os.path.relpath(f, LULLABIES).replace("\\", "/")
+                                  for f in self._remix(outbase)]
+                    self.step = self.total
+                    self.state, self.message = "done", "lullaby complete"
+                    return
+
+                if self._mode == "melody-match":
+                    files = self._apply_polish(outbase, self._melody_match(outbase))
+                    self.files = [os.path.relpath(f, LULLABIES).replace("\\", "/")
+                                  for f in files]
+                    self.step = self.total
+                    self.state, self.message = "done", "lullaby complete"
+                    return
+
+                self._pipeline(["--tempo-scale", str(self._tempo),
+                                "--melody-source", self._melody, "--out", outbase])
+                outputs = self._finish_piano(outbase)
+                outputs = self._apply_polish(outbase, outputs)
+
+                self.files = [os.path.relpath(f, LULLABIES).replace("\\", "/")
+                              for f in outputs]
+                self.step = self.total
+            self.state, self.message = "done", "lullaby complete " + (self.message or "")
+        except Exception as e:
+            self.state, self.message = "error", str(e)
+        finally:
+            try:
+                os.remove(self._src)
+            except Exception:
+                pass
+
+    def _apply_polish(self, outbase: str, files: list) -> list:
+        """Optional ACE-Step audio2audio polish pass over an already-rendered
+        lullaby wav — re-textures the sound while keeping its notes/tempo.
+        Applies to Piano or Melody Match output alike. Non-fatal: on any
+        failure the clean render ships as-is. Prepends the polished file to
+        `files` on success."""
+        if not self._polish:
+            return files
+        wav = outbase + ".wav"
+        if not os.path.isfile(wav):
+            return files
+        self.step, self.current = self.total, "polishing with ACE-Step"
+        try:
+            MGR.load("music", {})
+            cmd = [sys.executable, MUSIC, "--out", "-",
+                   "--tags", self.POLISH_TAGS, "--model", "turbo",
+                   "--audio", wav, "--denoise", "0.40", "--format", "flac"]
+            rc, sout, err = _run(cmd, timeout=1200)
+            line = (sout or "").strip().splitlines()[-1] if (sout or "").strip() else ""
+            if rc != 0 or not line.startswith("{"):
+                raise RuntimeError(err or "polish failed")
+            raw = outbase + "_polish_raw.flac"
+            with open(raw, "wb") as f:
+                f.write(base64.b64decode(json.loads(line)["audios"][0].split(",")[-1]))
+            # ACE renders hot (~-1dB mean) — bring it back to lullaby loudness
+            # and restore the fade-out before shipping
+            polished = outbase + "_polished.mp3"
+            rc, _, err = _run([_ffmpeg(), "-y", "-i", raw, "-af",
+                               "loudnorm=I=-16:TP=-1.5:LRA=9,"
+                               "afade=t=in:d=3,areverse,afade=t=in:d=7,areverse",
+                               "-ar", "44100", "-c:a", "libmp3lame",
+                               "-b:a", "192k", polished], timeout=600)
+            os.remove(raw)
+            if rc != 0:
+                raise RuntimeError("polish master failed: " + err[-200:])
+            return [polished] + list(files)
+        except Exception as pe:
+            self.message = f"(polish skipped: {pe})"
+            return files
+        finally:
+            try:
+                MGR.stop()
+            except Exception:
+                pass
+
+
+LULLABYJOB = LullabyJob()
+
+NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+
+
+def lullaby_info(name: str) -> dict:
+    """Workbench payload for an analyzed song: key/tempo, per-bar chords, both
+    melody candidates (scores + notes for the piano-roll), waveform envelope,
+    and audition preview URLs."""
+    name = _safe_name(name)
+    work = os.path.join(LULLABYKIT, "work", f"lullaby_src_{name}")
+    apath = os.path.join(work, "analysis.json")
+    if not os.path.isfile(apath):
+        raise RuntimeError("song not analyzed yet")
+    analysis = json.load(open(apath, encoding="utf-8"))
+    out = {"name": name,
+           "key": NOTE_NAMES[analysis["key_pc"]] + (" minor" if analysis["key_mode"] == "minor"
+                                                    else " major"),
+           "tempo": round(analysis["tempo"]),
+           "bars": [{"start": round(b["start"], 2),
+                     "chord": NOTE_NAMES[b["root"]] + ("m" if b["qual"] == "min" else "")}
+                    for b in analysis["bars"]]}
+    wpath = os.path.join(work, "waveform.json")
+    if os.path.isfile(wpath):
+        out["waveform"] = json.load(open(wpath, encoding="utf-8"))
+    spath = os.path.join(work, "stems.json")
+    if os.path.isfile(spath):
+        stems = json.load(open(spath, encoding="utf-8"))
+        out["stems"] = {
+            k: {**v, "preview": f"/lullaby_preview/{name}/stem_{k}.mp3"}
+            for k, v in stems.items()}
+    return out
+
+
+# ---- Track Splitter (any song -> 6 individual instrument tracks) --------------
+# This is deliberately just the Lullaby tab's analyze phase (same two-pass
+# Demucs separation, same stem previews) with no arrangement step — and it
+# stages its input under the identical lullaby_src_<name> work-dir name, so a
+# song split here is already cached if you later open it in the Lullaby tab
+# (and vice versa): the pipeline's separate-stage cache guard skips re-running
+# Demucs when the stems are already on disk.
+SPLITS = os.path.join(HERE, "splits")
+os.makedirs(SPLITS, exist_ok=True)
+
+
+def split_list() -> list:
+    if not os.path.isdir(SPLITS):
+        return []
+    out = []
+    for name in sorted(os.listdir(SPLITS)):
+        d = os.path.join(SPLITS, name)
+        if os.path.isdir(d):
+            out.append({"name": name, "files": sorted(os.listdir(d))})
+    return out
+
+
+def split_zip_bytes(name: str) -> bytes:
+    import io
+    import zipfile
+    base = os.path.normpath(os.path.join(SPLITS, _safe_name(name)))
+    if not (base.startswith(os.path.normpath(SPLITS) + os.sep) and os.path.isdir(base)):
+        raise RuntimeError("split set not found")
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for fn in os.listdir(base):
+            z.write(os.path.join(base, fn), fn)
+    return buf.getvalue()
+
+
+class SplitJob:
+    """Async stem-splitting job: separates a song into 6 instrument tracks and
+    saves them as individual downloadable files. Mirrors LullabyJob's
+    lifecycle but stops after separation — no arrangement, no remix."""
+
+    STAGE_LABELS = {1: "extracting audio", 2: "separating stems (GPU)"}
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self._reset()
+
+    def _reset(self):
+        self.state = "idle"; self.step = 0; self.total = 3
+        self.message = ""; self.current = ""; self.name = None; self.files = []
+
+    def status(self) -> dict:
+        return {"state": self.state, "step": self.step, "total": self.total,
+                "message": self.message, "current": self.current,
+                "name": self.name, "files": self.files}
+
+    def start(self, params: dict) -> dict:
+        with self.lock:
+            if self.state == "running":
+                raise RuntimeError("a split is already running — wait for it to finish")
+            if MGR.key:
+                raise RuntimeError("stop the loaded model first — Track Splitter runs "
+                                   "its own engine and needs the GPU")
+            if not os.path.isfile(LULLABY_PY):
+                raise RuntimeError("lullabykit is not installed (lullabykit/.venv missing)")
+            audio = params.get("audio") or ""
+            if not audio:
+                raise RuntimeError("upload a song first")
+            name = _safe_name(os.path.splitext(params.get("filename") or "song")[0]) or "song"
+            ext = os.path.splitext(params.get("filename") or "")[1].lower() or ".mp3"
+            # same lullaby_src_<name> naming as LullabyJob — shares its cache
+            src = os.path.join(TMP, f"lullaby_src_{name}{ext}")
+            with open(src, "wb") as f:
+                f.write(base64.b64decode(audio.split(",")[-1]))
+            self._reset()
+            self.state = "running"; self.name = name
+            self._src = src
+            self._format = "wav" if params.get("format") == "wav" else "mp3"
+        threading.Thread(target=self._run, daemon=True).start()
+        return self.status()
+
+    def _run(self):
+        try:
+            with MGR.lock:
+                env = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8",
+                           PYTHONUNBUFFERED="1")
+                p = subprocess.Popen(
+                    [LULLABY_PY, LULLABY_PIPELINE, self._src,
+                     "--until-stage", "transcribe", "--analysis-extras"],
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    text=True, encoding="utf-8", errors="replace", env=env,
+                    bufsize=1, **NOWIN)
+                tail = []
+                for line in p.stdout:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    tail.append(line); tail[:] = tail[-30:]
+                    m = re.match(r"^== (\d)/6 ", line)
+                    if m:
+                        self.step = min(int(m.group(1)), 2)
+                        self.current = self.STAGE_LABELS.get(self.step, line)
+                p.wait()
+                if p.returncode != 0:
+                    raise RuntimeError("split failed: " + " | ".join(tail[-4:]))
+
+                workdir = os.path.join(LULLABYKIT, "work", f"lullaby_src_{self.name}")
+                stem_dir = os.path.join(workdir, "stems", "htdemucs_ft", "raw")
+                if not os.path.isdir(stem_dir):
+                    raise RuntimeError("no stems were produced")
+
+                self.step, self.current = 3, "saving tracks"
+                outdir = os.path.join(SPLITS, self.name)
+                os.makedirs(outdir, exist_ok=True)
+                files = []
+                for stem in ("vocals", "guitar", "piano", "other", "bass", "drums"):
+                    src_wav = os.path.join(stem_dir, f"{stem}.wav")
+                    if not os.path.isfile(src_wav):
+                        continue
+                    if self._format == "wav":
+                        dst = os.path.join(outdir, f"{stem}.wav")
+                        shutil.copyfile(src_wav, dst)
+                    else:
+                        dst = os.path.join(outdir, f"{stem}.mp3")
+                        rc, _, err = _run([_ffmpeg(), "-y", "-i", src_wav, "-codec:a",
+                                           "libmp3lame", "-b:a", "192k", dst], timeout=300)
+                        if rc != 0:
+                            raise RuntimeError(f"mp3 encode failed for {stem}: {err[-200:]}")
+                    files.append(os.path.relpath(dst, SPLITS).replace("\\", "/"))
+                if not files:
+                    raise RuntimeError("no tracks were saved")
+                self.files = files
+                self.step = self.total
+            self.state, self.message = "done", "tracks saved"
+        except Exception as e:
+            self.state, self.message = "error", str(e)
+        finally:
+            try:
+                os.remove(self._src)
+            except Exception:
+                pass
+
+
+SPLITJOB = SplitJob()
+
+
+# ---- Sprite Studio ------------------------------------------------------------
+# Pose script per action: one line per frame, written to read as an animation loop
+# at these counts. Dict order = row order on the combined sheet.
+SPRITE_ACTIONS = {
+    "idle": [
+        "standing relaxed at rest, arms loose at the sides, mid exhale",
+        "standing relaxed, chest slightly risen on the inhale, head lifted a touch",
+        "standing relaxed at the top of the breath, shoulders slightly raised",
+        "standing relaxed, settling back down on the exhale, shoulders dropping",
+    ],
+    "walk": [
+        "mid-step with the right foot planted forward, left foot back on its toes, arms swinging opposite to the legs",
+        "weight settling low onto the front right foot, both knees bent mid-stride",
+        "legs crossing beneath the body mid-step, standing tall, arms at mid swing",
+        "pushing off the right foot, body at its highest point, left leg reaching forward",
+        "mid-step with the left leg planted forward and knee bent, right leg trailing behind on its toes, right arm swung forward",
+        "legs crossing beneath the body mid-step, back heel lifting off the ground",
+    ],
+    "run": [
+        "sprinting, leaning far forward, right foot striking the ground, arms pumping",
+        "sprinting, pushing off hard from the right foot, body low and leaning into the sprint",
+        "sprinting airborne, both feet off the ground, legs scissored wide mid-stride",
+        "sprinting, left foot striking the ground, opposite arm pumping forward",
+        "sprinting, pushing off hard from the left foot, back leg kicked up high behind",
+        "sprinting airborne in full stride, front leg reaching far ahead, back leg kicked up high behind",
+    ],
+    "jump": [
+        "crouched low about to jump, knees deeply bent, arms swung back behind the body",
+        "leaping upward, legs fully extended pushing off the ground, arms thrown upward",
+        "airborne at the top of the jump arc, knees tucked up, arms out for balance",
+        "landing from a jump, both knees deeply bent absorbing the impact, body crouched low, arms stretched out forward",
+    ],
+    "fall": [
+        "falling through the air, arms raised, legs trailing, hair and clothes blown upward",
+        "falling fast, body tilted forward, arms flailing slightly",
+    ],
+    "crouch": [
+        "crouching down low on bent knees, one hand near the ground, head up and alert",
+        "fully crouched, low and compact, weight coiled, ready to spring",
+    ],
+    "attack": [
+        "winding up a punch, torso coiled back, fist pulled far back behind the head, front arm guarding",
+        "maximum wind-up, fist still drawn back, weight loaded on the back foot",
+        "lunging forward mid-punch, fist sweeping through the air",
+        "punch fully extended at the end of the strike, arm straight out",
+        "recovering balance after the punch, fists returning to a guard position",
+    ],
+    "hurt": [
+        "flinching in pain from a hit, bent backward at the waist, head thrown back, eyes squeezed shut, one arm clutching the ribs",
+        "staggering off balance from a hit, one foot slid back, grimacing, guarding with an arm",
+    ],
+    "death": [
+        "struck down, body arched sharply backward, arms flung wide, head thrown back, eyes squeezed shut in pain",
+        "collapsing, dropped onto both knees, body slumping forward, arms hanging limp, eyes closed",
+        "toppling over, body nearly horizontal in the air, one arm reaching out",
+        "crumpled on the ground on his side, propped weakly on one elbow, head drooping, wearing his brown leather boots",
+        "lying still, flat on his back on the ground, eyes closed, fully at rest",
+    ],
+}
+
+SPRITE_VIEWS = {
+    "side": "Strict side view, character facing right",
+    "front": "Front view, character facing the viewer",
+    "topdown": "Top-down view from directly above",
+    "34": "Three-quarter view",
+}
+
+
+def _sprite_poses(action: str, custom: str, n: int) -> list:
+    """Pose script for one action. Known actions use their hand-written frames
+    (resampled if the user overrides the count); custom actions get a generic
+    anticipation -> peak -> follow-through split across n frames."""
+    base = SPRITE_ACTIONS.get(action)
+    if base is None:
+        what = (custom or action or "the action").strip()
+        def phase(i):
+            t = i / max(n - 1, 1)
+            if t < 0.34:
+                return "the anticipation and wind-up of the motion"
+            if t < 0.67:
+                return "the peak of the motion"
+            return "the follow-through and recovery of the motion"
+        return [f"performing {what} — frame showing {phase(i)}" for i in range(n)]
+    if not n or n == len(base):
+        return base
+    return [base[round(i * (len(base) - 1) / max(n - 1, 1))] for i in range(n)]
+
+
+def _sprite_prompt(desc: str, action: str, pose: str, i: int, n: int, view: str) -> str:
+    who = (desc or "").strip() or "the exact character from the reference image"
+    v = SPRITE_VIEWS.get(view, SPRITE_VIEWS["side"])
+    # The view is stated twice — once up front and once right after the pose. With a
+    # single mention, pose lines that don't pin the body's orientation let the model
+    # snap back to the reference image's orientation (front-facing ref -> front frame).
+    return (f"2D game sprite of {who}. {v}. "
+            f"Animation: {action}, frame {i + 1} of {n} — {pose}. {v}, mid-motion. "
+            "Exactly the same character, art style, proportions, outfit and color palette "
+            "as the reference image. Full body, whole character fully inside the frame, "
+            "centered, plain solid white background, no text, no watermark, no border.")
+
+
+def sprite_zip_bytes(name: str) -> bytes:
+    """Zip one finished sprite project (in memory) for the ⬇ Download set button."""
+    import io
+    import zipfile
+    base = os.path.normpath(os.path.join(SPRITES, _safe_name(name)))
+    if not (base.startswith(os.path.normpath(SPRITES) + os.sep) and os.path.isdir(base)):
+        raise RuntimeError("sprite set not found")
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for root, dirs, fns in os.walk(base):
+            dirs[:] = [d for d in dirs if not d.startswith("_")]   # skip _backups etc.
+            for fn in fns:
+                p = os.path.join(root, fn)
+                z.write(p, os.path.relpath(p, os.path.dirname(base)))
+    return buf.getvalue()
+
+
+class SpriteJob:
+    """Async sprite-set job: one reference-edit generation per frame, then per-action
+    cutout/resize/strip-sheet and one combined sheet via spritekit.py. Mirrors
+    AudiobookJob's lifecycle, plus a cancel flag checked between frames (a full set
+    is ~35 generations and can run 20+ minutes)."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self._reset()
+
+    def _reset(self):
+        self.state = "idle"; self.step = 0; self.total = 0
+        self.message = ""; self.current = ""; self.name = None
+        self.files = []; self.stop_flag = False
+
+    def status(self) -> dict:
+        return {"state": self.state, "step": self.step, "total": self.total,
+                "message": self.message, "current": self.current,
+                "name": self.name, "files": self.files}
+
+    def cancel(self) -> dict:
+        if self.state == "running":
+            self.stop_flag = True
+            self.current = "cancelling after this frame…"
+        return self.status()
+
+    def start(self, d: dict) -> dict:
+        with self.lock:
+            if self.state == "running":
+                raise RuntimeError("a sprite set is already rendering — wait for it or cancel it")
+            if not (MGR.key or "").startswith("image:"):
+                raise RuntimeError("load the image model first (top of this tab)")
+            ref = d.get("image") or ""
+            if not ref:
+                raise RuntimeError("upload a reference image — it defines the character and style")
+            if d.get("mode") == "set":
+                picked = set(d.get("actions") or [])
+                plan = [(a, p) for a, p in SPRITE_ACTIONS.items() if a in picked]
+                if not plan:
+                    raise RuntimeError("pick at least one action for the set")
+            else:
+                sel = (d.get("action") or "idle").strip()
+                custom = (d.get("custom") or "").strip()
+                if sel == "custom" and not custom:
+                    raise RuntimeError("describe the custom action")
+                act = (_safe_name(custom).lower().replace(" ", "-") if sel == "custom" else sel)
+                default_n = len(SPRITE_ACTIONS.get(sel, [])) or 4
+                n = max(2, min(12, int(d.get("frames") or 0) or default_n))
+                plan = [(act, _sprite_poses(sel, custom, n))]
+            raw = (d.get("name") or "").strip()
+            base = _safe_name(raw) if raw else "sprites_" + time.strftime("%Y%m%d_%H%M%S")
+            name, k = base, 2
+            while os.path.exists(os.path.join(SPRITES, name)):
+                name, k = f"{base}_{k}", k + 1
+            refpath = os.path.join(TMP, "sprite_ref.png")
+            with open(refpath, "wb") as f:
+                f.write(base64.b64decode(ref.split(",")[-1]))
+            self._reset()
+            self.state = "running"; self.name = name
+            self.total = sum(len(p) for _, p in plan)
+            self._plan = plan; self._params = dict(d); self._ref = refpath
+        threading.Thread(target=self._run, daemon=True).start()
+        return self.status()
+
+    def _run(self):
+        try:
+            with MGR.lock:
+                if not (MGR.key or "").startswith("image:"):
+                    raise RuntimeError("the image model was unloaded")
+                model = MGR.key.split(":", 1)[1]
+                d = self._params
+                view = d.get("view") or "side"
+                desc = (d.get("desc") or "").strip()
+                steps = max(4, min(50, int(d.get("steps") or 24)))
+                cfg = float(d.get("cfg") or 2.5)
+                seed = int(d.get("seed", -1))
+                size = int(d.get("size") or 256)
+                if size not in (128, 256, 512, 1024):
+                    size = 256
+                cutout = bool(d.get("cutout", True))
+                if cutout:
+                    rc, _o, _e = _run([COMFY_PY, "-c", "import rembg"], timeout=120)
+                    if rc != 0:   # degrade instead of failing a long job over transparency
+                        cutout = False
+                        self.message = ("transparency skipped — install with: "
+                                        "ComfyUI\\.venv\\Scripts\\pip install rembg onnxruntime")
+                proj = os.path.join(SPRITES, self.name)
+                os.makedirs(proj, exist_ok=True)
+                shutil.copyfile(self._ref, os.path.join(proj, "reference.png"))
+                # Persist the generation settings so single frames can be re-rolled
+                # later (new session, new server) without re-entering everything.
+                with open(os.path.join(proj, "job.json"), "w", encoding="utf-8") as f:
+                    json.dump({"desc": desc, "view": view, "size": size, "cutout": cutout,
+                               "steps": steps, "cfg": cfg, "model": model,
+                               "order": [a for a, _ in self._plan],
+                               "poses": {a: p for a, p in self._plan}}, f, indent=2)
+
+                def rel(p):
+                    return os.path.relpath(p, SPRITES).replace("\\", "/")
+
+                done = 0
+                for act, poses in self._plan:
+                    adir = os.path.join(proj, act)
+                    os.makedirs(adir, exist_ok=True)
+                    for i, pose in enumerate(poses):
+                        if self.stop_flag:
+                            raise RuntimeError("cancelled")
+                        self.current = f"{act} — frame {i + 1}/{len(poses)}"
+                        out = os.path.join(adir, f"frame_{i + 1:02d}.png")
+                        cmd = [sys.executable, GEN, "--prompt",
+                               _sprite_prompt(desc, act, pose, i, len(poses), view),
+                               "--image", self._ref, "--out", out,
+                               "--width", "1024", "--height", "1024",
+                               "--steps", str(steps), "--cfg", str(cfg), "--model", model]
+                        if seed >= 0:
+                            cmd += ["--seed", str(seed + done)]
+                        rc, sout, err = _run(cmd, timeout=600)
+                        if rc != 0 or not os.path.isfile(out):
+                            raise RuntimeError(err or sout or f"frame failed ({act} {i + 1})")
+                        done += 1; self.step = done
+                        self.files = self.files + [rel(out)]   # raw frame appears in the UI now
+                    # post-process the finished action while the next one renders: the
+                    # frames are rewritten in place (cutout + resize) + a strip sheet.
+                    self.current = f"{act} — cutout & sheet"
+                    sheet = os.path.join(proj, f"{act}_sheet.png")
+                    kcmd = [COMFY_PY, SPRITEKIT, "action", "--dir", adir,
+                            "--size", str(size), "--sheet", sheet] + (["--cutout"] if cutout else [])
+                    rc, sout, err = _run(kcmd, timeout=900)
+                    if rc == 3 and cutout:   # rembg broke mid-job — degrade and redo opaque
+                        cutout = False
+                        self.message = "transparency skipped — rembg failed (see server log)"
+                        rc, sout, err = _run([c for c in kcmd if c != "--cutout"], timeout=900)
+                    if rc != 0:
+                        raise RuntimeError(err or sout or f"post-processing failed ({act})")
+                    self.files = self.files + [rel(sheet)]     # sheet arriving = frames processed
+                combined = os.path.join(proj, "spritesheet.png")
+                rc, sout, err = _run([COMFY_PY, SPRITEKIT, "combine", "--project", proj,
+                                      "--size", str(size),
+                                      "--order", ",".join(a for a, _ in self._plan),
+                                      "--out", combined], timeout=600)
+                if rc != 0:
+                    raise RuntimeError(err or sout or "combined sheet failed")
+                self.files = self.files + [rel(combined),
+                                           rel(os.path.splitext(combined)[0] + ".json")]
+            self.state = "done"
+            self.message = ((self.message + " · ") if self.message else "") + \
+                f"sprite set complete — {done} frames"
+        except Exception as e:
+            self.state = "cancelled" if str(e) == "cancelled" else "error"
+            self.message = str(e)
+        finally:
+            try:
+                os.remove(self._ref)
+            except Exception:
+                pass
+
+
+    def reroll(self, d: dict) -> dict:
+        """Regenerate ONE frame of a finished set (new seed, optionally a custom pose
+        and higher cfg), re-cutout/resize just that frame, and rebuild the action's
+        strip + the combined sheet. Runs as a 1-frame job through the same lifecycle."""
+        with self.lock:
+            if self.state == "running":
+                raise RuntimeError("a sprite job is already running — wait for it to finish")
+            if not (MGR.key or "").startswith("image:"):
+                raise RuntimeError("load the image model first (top of this tab)")
+            name = _safe_name(d.get("name") or "")
+            act = re.sub(r"[^A-Za-z0-9 _-]", "", d.get("action") or "")
+            idx = int(d.get("frame") or 0)
+            proj = os.path.join(SPRITES, name)
+            adir = os.path.join(proj, act)
+            n = len([f for f in os.listdir(adir) if f.startswith("frame_")]) \
+                if os.path.isdir(adir) else 0
+            if not (os.path.isfile(os.path.join(proj, "reference.png")) and 1 <= idx <= n):
+                raise RuntimeError("frame not found")
+            job = {}
+            try:
+                with open(os.path.join(proj, "job.json"), encoding="utf-8") as f:
+                    job = json.load(f)
+            except Exception:
+                pass
+            job.update({k: v for k, v in d.items() if v not in (None, "")})
+            self._reset()
+            self.state = "running"; self.name = name; self.total = 1
+            self.current = f"{act} — re-rolling frame {idx}/{n}"
+            self._rr = (proj, act, idx, n, job)
+        threading.Thread(target=self._run_reroll, daemon=True).start()
+        return self.status()
+
+    def _run_reroll(self):
+        try:
+            with MGR.lock:
+                if not (MGR.key or "").startswith("image:"):
+                    raise RuntimeError("the image model was unloaded")
+                proj, act, idx, n, job = self._rr
+                model = MGR.key.split(":", 1)[1]
+                pose = (job.get("pose") or "").strip()
+                if not pose:
+                    saved = (job.get("poses") or {}).get(act) or []
+                    pose = saved[idx - 1] if len(saved) >= idx else _sprite_poses(act, act, n)[idx - 1]
+                view = job.get("view") or "side"
+                size = int(job.get("size") or 512)
+                # Default one notch stronger than the original pass: re-rolls exist
+                # because the pose didn't land, and more guidance is the usual cure.
+                cfg = float(job.get("cfg_override") or (float(job.get("cfg") or 2.5) + 1.0))
+                steps = max(4, min(50, int(job.get("steps") or 24)))
+                seed = int(job.get("seed", -1))
+                out = os.path.join(proj, act, f"frame_{idx:02d}.png")
+                # A re-roll can come out WORSE than what it replaces — keep the old
+                # frame in _backups (excluded from the zip) so nothing is ever lost.
+                if os.path.isfile(out):
+                    bdir = os.path.join(proj, "_backups")
+                    os.makedirs(bdir, exist_ok=True)
+                    shutil.copyfile(out, os.path.join(
+                        bdir, f"{act}_frame_{idx:02d}_{int(time.time())}.png"))
+                cmd = [sys.executable, GEN, "--prompt",
+                       _sprite_prompt(job.get("desc") or "", act, pose, idx - 1, n, view),
+                       "--image", os.path.join(proj, "reference.png"), "--out", out,
+                       "--width", "1024", "--height", "1024",
+                       "--steps", str(steps), "--cfg", str(cfg), "--model", model]
+                if seed >= 0:
+                    cmd += ["--seed", str(seed)]
+                rc, sout, err = _run(cmd, timeout=600)
+                if rc != 0 or not os.path.isfile(out):
+                    raise RuntimeError(err or sout or "re-roll generation failed")
+                self.step = 1
+
+                def rel(p):
+                    return os.path.relpath(p, SPRITES).replace("\\", "/")
+
+                self.current = f"{act} — cutout & sheets"
+                kcmd = [COMFY_PY, SPRITEKIT, "frame", "--file", out, "--size", str(size)]
+                if job.get("cutout", True):
+                    kcmd += ["--cutout"]
+                rc, sout, err = _run(kcmd, timeout=600)
+                if rc == 3:
+                    rc, sout, err = _run([c for c in kcmd if c != "--cutout"], timeout=600)
+                if rc != 0:
+                    raise RuntimeError(err or sout or "re-roll post-processing failed")
+                sheet = os.path.join(proj, f"{act}_sheet.png")
+                rc, sout, err = _run([COMFY_PY, SPRITEKIT, "strip", "--dir",
+                                      os.path.join(proj, act), "--size", str(size),
+                                      "--sheet", sheet], timeout=600)
+                if rc != 0:
+                    raise RuntimeError(err or sout or "strip rebuild failed")
+                combined = os.path.join(proj, "spritesheet.png")
+                order = ",".join(job.get("order") or [])
+                rc, sout, err = _run([COMFY_PY, SPRITEKIT, "combine", "--project", proj,
+                                      "--size", str(size), "--order", order,
+                                      "--out", combined], timeout=600)
+                if rc != 0:
+                    raise RuntimeError(err or sout or "combined sheet rebuild failed")
+                self.files = [rel(out), rel(sheet), rel(combined)]
+            self.state, self.message = "done", f"re-rolled {act} frame {idx}"
+        except Exception as e:
+            self.state, self.message = "error", str(e)
+
+
+SPRITEJOB = SpriteJob()
+
+
+# ---- Composer ----------------------------------------------------------------
+# "Figure out which instruments the song needs, find free plugins for them under
+# 800 MB, then compose/mix/automate it in a DAW" — done entirely on this machine:
+# the plugin hunt becomes a scan of the bundled GM SoundFont (FluidR3 at 141 MB),
+# the DAW becomes composerkit.py's render/mix engine, and the LLM does the part a
+# producer would.
+
+_COMPOSER_LIB = {"t": 0.0, "data": None}
+
+
+def composer_library() -> dict:
+    """The instrument catalog + soundfont budget scan, cached briefly (it stats
+    a 1.2 GB file, and the Composer tab asks for it on every page load)."""
+    if _COMPOSER_LIB["data"] and time.time() - _COMPOSER_LIB["t"] < 120:
+        return _COMPOSER_LIB["data"]
+    rc, out, err = _run([LULLABY_PY, COMPOSERKIT, "library"], timeout=120)
+    if rc != 0 or not out.startswith("{"):
+        raise RuntimeError(err or out or "could not read the instrument library")
+    data = json.loads(out)
+    data["genres"] = COMPOSER_GENRES
+    _COMPOSER_LIB.update(t=time.time(), data=data)
+    return data
+
+
+COMPOSER_GENRES = ["synth-pop", "cinematic", "lo-fi", "rock", "edm", "jazz",
+                   "hip hop", "ambient"]
+
+COMPOSER_SYSTEM = (
+    "You are an award-winning composer, arranger and mix engineer. You work in a "
+    "fixed local studio: one sampler (FluidSynth) loaded with the General MIDI "
+    "instrument set, and a mixing engine that can do saturation, tone shelves, "
+    "filter sweeps, tempo-synced delay, convolution reverb, volume/pan/FX "
+    "automation, risers, impacts, downlifters, drops and kick sidechaining.\n"
+    "You do NOT write note data. You decide the musical direction and the mix, "
+    "and the studio's arranger writes the parts from your plan.\n"
+    "Answer with a single JSON object and nothing else — no prose, no markdown "
+    "fence, no commentary."
+)
+
+
+def _composer_menu_text(lib: dict) -> str:
+    lines = []
+    for group, items in lib["instruments"].items():
+        picks = ", ".join(f"{i['program']}={i['name']}" for i in items)
+        lines.append(f"  {group}: {picks}")
+    return "\n".join(lines)
+
+
+def _composer_prompt(brief: str, genre: str, seconds: int, lib: dict,
+                     tracks: int, key: str, bpm: int) -> str:
+    bars_hint = max(24, int(round(seconds / 2.0)))     # ~2s a bar at pop tempi
+    fixed = ""
+    if key:
+        fixed += f"\nKey: {key} (use this)"
+    else:
+        # Without a band to aim at, the planner copies the example skeleton's key
+        # and tempo every single time — every song came back A minor at 110 bpm.
+        hint = (lib.get("genre_hints") or {}).get(genre.lower(), {})
+        home = hint.get("bpm")
+        fixed += ("\nKey: choose one that suits the brief — commit to a real "
+                  "choice, major or minor, and do not reuse the example's")
+        if home:
+            fixed += (f"\nTempo: pick something in the {int(home * 0.85)}-"
+                      f"{int(home * 1.15)} bpm range for {genre}, chosen for THIS "
+                      f"brief — not the example's number")
+    if bpm:
+        fixed += f"\nTempo: {bpm} bpm (use this)"
+    roles_text = "\n".join(f"  {r}: {d}" for r, d in lib["roles"].items())
+    return f"""Compose an original instrumental song.
+
+BRIEF: {brief or f'an outstanding {genre} instrumental'}
+Style/genre: {genre}
+Target length: about {seconds // 60}:{seconds % 60:02d} \
+(roughly {bars_hint} bars in total across all sections)
+Instrument count: {tracks} tracks{fixed}
+
+STEP 1 — decide which instruments this song needs, and pick each one's patch
+from the installed library (program number = GM patch, all free and already
+local):
+{_composer_menu_text(lib)}
+
+STEP 2 — give every track one ROLE the arranger can write. These are the only
+roles that exist:
+{roles_text}
+
+STEP 3 — mix and automate it. Per track: level 0-1.5, pan -1 (hard left) to +1
+(hard right), reverb 0-1, delay 0-1, drive 0-1, tone
+(neutral/warm/bright/dark/thin), and up to 3 automation moves:
+  {{"param":"cutoff|volume|pan|reverb|delay","mode":"ramp","from":0.2,"to":1.0,"section":"build"}}
+  {{"param":"pan","mode":"autopan","depth":0.5,"bars":4}}
+A "ramp" with a section name sweeps only inside that section; without one it
+sweeps across the whole song.
+
+STEP 4 — structure it. Each section: bars (2-32), energy 0-1 (drives velocity,
+kit density and mix loudness), the chord progression as symbols (Am, F, Cmaj7,
+G7, Bb/D — the progression loops to fill the section), which tracks play, and
+section FX from: riser (builds out of this section into the next), impact (hits
+this section's downbeat), downlifter (falls out of this section), drop (a beat
+of silence before the downbeat), filter_sweep (opens a lowpass across it).
+Leave tracks OUT of quiet sections — an arrangement that drops instruments and
+brings them back is what makes a song build.
+
+Reply with exactly this JSON shape (the numbers below are FORMAT examples — pick
+your own values for every one of them):
+{{"title":"...","genre":"{genre}","bpm":0,"key":"...","time_signature":4,
+ "sidechain":true,"swing":0.0,
+ "notes":"2-4 sentences: why these instruments, and how the mix/automation works",
+ "instruments":[{{"track":"pad","role":"pad","program":89,"level":0.5,"pan":-0.3,
+   "reverb":0.7,"delay":0.1,"drive":0.0,"tone":"warm",
+   "automation":[{{"param":"cutoff","mode":"ramp","from":0.2,"to":1.0}}]}}],
+ "sections":[{{"name":"intro","bars":8,"energy":0.3,"chords":["Am","F","C","G"],
+   "tracks":["pad"],"fx":["riser"]}}]}}
+
+Rules: time_signature is 3 or 4. bpm 50-200. {tracks} instruments, each with a
+distinct track name, including exactly one "drums" track unless the style has no
+kit. 5-9 sections. Every name in a section's "tracks" must match a track name.
+JSON only."""
+
+
+def _extract_json(text: str) -> dict:
+    """Pull the plan out of whatever the model actually said. Local models fence
+    their JSON, prepend "Here's the song:", or emit reasoning first — so take the
+    outermost balanced {...} rather than trusting the whole response."""
+    s = (text or "").strip()
+    if s.startswith("```"):
+        s = re.sub(r"^```[a-zA-Z]*\s*", "", s)
+        s = re.sub(r"\s*```\s*$", "", s)
+    start = s.find("{")
+    if start < 0:
+        raise RuntimeError("the planner returned no JSON")
+    depth, in_str, esc = 0, False, False
+    for i in range(start, len(s)):
+        c = s[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif c == "\\":
+                esc = True
+            elif c == '"':
+                in_str = False
+            continue
+        if c == '"':
+            in_str = True
+        elif c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return _loads_lenient(s[start:i + 1])
+    raise RuntimeError("the planner's JSON was truncated (try fewer tracks)")
+
+
+def _loads_lenient(blob: str) -> dict:
+    """json.loads, then the same blob with the slips a local model actually makes
+    patched out. Each repair is tried cumulatively, cheapest first."""
+    attempts = [blob]
+    # trailing commas before a close — by far the most common
+    attempts.append(re.sub(r",\s*([}\]])", r"\1", attempts[-1]))
+    # a missing comma between adjacent members ("}{", "] \"key\"", "0.5 \"key\"")
+    attempts.append(re.sub(r"([}\]0-9truefalse\"])\s*\n\s*([{\"])", r"\1,\2",
+                           attempts[-1]))
+    # python literals leaking into the JSON
+    attempts.append(re.sub(r"\b(True|False|None)\b",
+                           lambda m: {"True": "true", "False": "false",
+                                      "None": "null"}[m.group(1)], attempts[-1]))
+    last = None
+    for cand in attempts:
+        try:
+            out = json.loads(cand)
+            if isinstance(out, dict):
+                return out
+        except json.JSONDecodeError as e:
+            last = e
+    raise RuntimeError(f"the planner's JSON wouldn't parse ({last})")
+
+
+def composer_list() -> list:
+    out = []
+    for name in sorted(os.listdir(COMPOSITIONS)):
+        d = os.path.join(COMPOSITIONS, name)
+        if not os.path.isdir(d):
+            continue
+        item = {"name": name, "files": []}
+        try:
+            with open(os.path.join(d, "score.json"), encoding="utf-8") as f:
+                sc = json.load(f)
+            item.update(title=sc.get("title"), genre=sc.get("genre"),
+                        key=sc.get("key"), bpm=sc.get("bpm"),
+                        duration=sc.get("duration"))
+        except Exception:
+            pass
+        for fn in sorted(os.listdir(d)):
+            if fn.lower().endswith((".mp3", ".wav", ".mid", ".flac")):
+                item["files"].append(fn)
+        out.append(item)
+    return out
+
+
+def composer_info(name: str) -> dict:
+    """Everything the tab shows about one finished composition: the plan it was
+    rendered from, the notes, and the stem list."""
+    name = _safe_name(name)
+    d = os.path.normpath(os.path.join(COMPOSITIONS, name))
+    if not d.startswith(os.path.normpath(COMPOSITIONS) + os.sep) or not os.path.isdir(d):
+        raise RuntimeError("composition not found")
+    with open(os.path.join(d, "score.json"), encoding="utf-8") as f:
+        score = json.load(f)
+    stems = []
+    sdir = os.path.join(d, "stems")
+    if os.path.isdir(sdir):
+        stems = [f"{name}/stems/{fn}" for fn in sorted(os.listdir(sdir))
+                 if fn.lower().endswith((".flac", ".wav"))]
+    md = ""
+    mdp = os.path.join(d, "arrangement.md")
+    if os.path.isfile(mdp):
+        with open(mdp, encoding="utf-8") as f:
+            md = f.read()
+    return {"name": name, "score": score, "stems": stems, "arrangement": md}
+
+
+def composer_zip_bytes(name: str) -> bytes:
+    """Zip a finished composition — master, multitrack MIDI, stems and score."""
+    import io
+    import zipfile
+    base = os.path.normpath(os.path.join(COMPOSITIONS, _safe_name(name)))
+    if not (base.startswith(os.path.normpath(COMPOSITIONS) + os.sep)
+            and os.path.isdir(base)):
+        raise RuntimeError("composition not found")
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for root, dirs, fns in os.walk(base):
+            dirs[:] = [x for x in dirs if not x.startswith("_")]
+            for fn in fns:
+                p = os.path.join(root, fn)
+                z.write(p, os.path.relpath(p, os.path.dirname(base)))
+    return buf.getvalue()
+
+
+def composer_notes(name: str) -> dict:
+    """The composed notes of a saved song, for the piano-roll editor."""
+    name = _safe_name(name)
+    d = os.path.normpath(os.path.join(COMPOSITIONS, name))
+    if not d.startswith(os.path.normpath(COMPOSITIONS) + os.sep):
+        raise RuntimeError("composition not found")
+    spath = os.path.join(d, "score.json")
+    if not os.path.isfile(spath):
+        raise RuntimeError("composition not found")
+    rc, out, err = _run([LULLABY_PY, COMPOSERKIT, "notes", "--score", spath],
+                        timeout=300)
+    if rc != 0 or not out.startswith("{"):
+        raise RuntimeError(err or out or "could not read the notes")
+    return json.loads(out)
+
+
+class ComposerJob:
+    """Two-phase job: PLAN (one LLM call, needs the Language model and so the
+    Manager lock) then RENDER (composerkit subprocess — CPU only, so the lock is
+    released first and loading a model mid-render is allowed).
+
+    Progress during the render comes from the progress.json composerkit writes
+    per stage; without it a 30-90s subprocess would be a blank spinner."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self._proc = None
+        self._reset()
+
+    def _reset(self):
+        self.state = "idle"; self.step = 0; self.total = 0
+        self.message = ""; self.current = ""; self.name = None
+        self.files = []; self.plan = None; self.stop_flag = False
+        self._proc = None; self._live = None
+
+    def status(self) -> dict:
+        step, total, current = self.step, self.total, self.current
+        if self.state == "running" and self.name:
+            # the subprocess owns the fine-grained progress
+            try:
+                p = os.path.join(COMPOSITIONS, self.name, "progress.json")
+                with open(p, encoding="utf-8") as f:
+                    live = json.load(f)
+                # +1/+1 keeps the planning phase visible as the first step
+                self._live = (int(live.get("step", 0)) + 1,
+                              int(live.get("total", 0)) + 1,
+                              live.get("current") or current)
+            except Exception:
+                # a poll that lands mid-write must not fall back to the coarse
+                # 1-of-3 counter — that made the bar visibly jump backwards
+                pass
+            if self._live:
+                step, total, current = self._live
+        return {"state": self.state, "step": step, "total": total,
+                "message": self.message, "current": current, "name": self.name,
+                "files": self.files, "plan": self.plan}
+
+    def cancel(self) -> dict:
+        if self.state == "running":
+            self.stop_flag = True
+            self.current = "cancelling…"
+            p = self._proc
+            if p and p.poll() is None:
+                try:
+                    subprocess.run(["taskkill", "/T", "/F", "/PID", str(p.pid)],
+                                   capture_output=True, timeout=15, **NOWIN)
+                except Exception:
+                    pass
+        return self.status()
+
+    def start(self, d: dict) -> dict:
+        with self.lock:
+            if self.state == "running":
+                raise RuntimeError("a song is already being composed — wait for it "
+                                   "or cancel it")
+            if not os.path.isfile(LULLABY_PY):
+                raise RuntimeError("lullabykit's venv is missing — the Composer "
+                                   "renders with it (see setup)")
+            raw = (d.get("name") or d.get("title") or "").strip()
+            base = _safe_name(raw) if raw else "song_" + time.strftime("%Y%m%d_%H%M%S")
+            name, k = base, 2
+            while os.path.exists(os.path.join(COMPOSITIONS, name)):
+                name, k = f"{base}_{k}", k + 1
+            self._reset()
+            self.state = "running"; self.name = name
+            self.total = 3; self.step = 0
+            self.current = "planning the arrangement"
+            self._params = dict(d)
+        threading.Thread(target=self._run, daemon=True).start()
+        return self.status()
+
+    def rerender(self, d: dict) -> dict:
+        """Render an edited score straight from the editor — no planner call.
+
+        Overwrites the song's own folder: the arrangement lives in score.json,
+        which is written every render, so nothing about the composition is lost
+        while iterating. Only the audio is replaced."""
+        with self.lock:
+            if self.state == "running":
+                raise RuntimeError("a song is already rendering — wait for it "
+                                   "or cancel it")
+            score = d.get("score")
+            if not isinstance(score, dict) or not score.get("instruments"):
+                raise RuntimeError("no score to render")
+            name = _safe_name(d.get("name") or "")
+            if not name or not os.path.isdir(os.path.join(COMPOSITIONS, name)):
+                raise RuntimeError("unknown composition")
+            self._reset()
+            self.state = "running"; self.name = name
+            self.total = 3; self.step = 1
+            self.current = "re-rendering your edits"
+            self._params = {"stems": d.get("stems", True),
+                            "polish": d.get("polish", False),
+                            "polish_denoise": d.get("polish_denoise", 0.35),
+                            "_score": score}
+        threading.Thread(target=self._run, daemon=True).start()
+        return self.status()
+
+    def _plan_with_llm(self, d: dict, lib: dict) -> dict:
+        """One LLM call under the Manager lock. Any failure is non-fatal: the
+        genre template still produces a complete song, which matters because the
+        render is the slow part and shouldn't be lost to a bad JSON day."""
+        brief = (d.get("brief") or "").strip()
+        genre = (d.get("genre") or "synth-pop").strip()
+        seconds = max(30, min(420, int(d.get("seconds") or 150)))
+        tracks = max(3, min(9, int(d.get("tracks") or 6)))
+        prompt = _composer_prompt(brief, genre, seconds, lib, tracks,
+                                  (d.get("key") or "").strip(),
+                                  int(d.get("bpm") or 0))
+        with MGR.lock:
+            model = current_llm_model()
+            if not model:
+                raise RuntimeError("no Language model is loaded")
+            # 0.65, not 0.9: the creative decisions here are WHICH instruments and
+            # chords, not the JSON syntax, and high temperature mostly buys
+            # malformed structure. On a parse failure retry once, colder — the
+            # plan is seconds of compute and the render is minutes, so it is
+            # always worth a second try before falling back to a template.
+            plan, err = None, None
+            for temperature in (0.65, 0.3):
+                text = llm_raw(prompt, task="research", system=COMPOSER_SYSTEM,
+                               max_tokens=4096, temperature=temperature,
+                               top_p=0.95, model=model, timeout=420)
+                try:
+                    plan = _extract_json(text)
+                    break
+                except Exception as e:
+                    err = e
+                    self.current = "planner returned bad JSON — retrying colder"
+            if plan is None:
+                raise err or RuntimeError("the planner produced no usable plan")
+        plan["planner"] = model
+        return plan
+
+    def _apply_polish(self, outdir: str, result: dict) -> list:
+        """Optional ACE-Step audio2audio pass over the finished master.
+
+        Answers "would ACE-Step help the MIDI-ness?" — it does, by replacing
+        sampled timbres with learned ones, but it is makeup rather than surgery:
+        it regenerates the whole mix, so transients soften, it can drift off the
+        grid, and it cannot be applied per-instrument (the stems stay dry).
+        Kept deliberately optional and non-fatal — the clean render always ships,
+        and the polished version is offered ALONGSIDE it rather than replacing
+        it, so the two can be compared.
+
+        Costs a model swap: ACE-Step is a resident GPU worker, so loading it
+        unloads the planner. That is fine here because planning is finished."""
+        files = list(self.files)
+        if not self._params.get("polish"):
+            return files
+        wav = os.path.join(outdir, f"{self.name}.wav")
+        if not os.path.isfile(wav):
+            return files
+        self.current = "polishing with ACE-Step"
+        sc = result.get("score") or {}
+        insts = ", ".join(t["instrument"] for t in sc.get("instruments", [])[:5])
+        tags = (f"{sc.get('genre', 'instrumental')}, instrumental, "
+                f"{insts}, {sc.get('bpm', 110)} bpm, "
+                f"clean acoustic recording, natural instrument timbre, warm analog")
+        raw = os.path.join(outdir, "_polish_raw.flac")
+        try:
+            MGR.load("music", {})
+            rc, sout, err = _run(
+                [sys.executable, MUSIC, "--out", "-", "--tags", tags,
+                 "--model", "turbo", "--audio", wav,
+                 "--denoise", str(float(self._params.get("polish_denoise") or 0.35)),
+                 "--format", "flac"], timeout=1800)
+            line = (sout or "").strip().splitlines()[-1] if (sout or "").strip() else ""
+            if rc != 0 or not line.startswith("{"):
+                raise RuntimeError(err or "polish failed")
+            with open(raw, "wb") as f:
+                f.write(base64.b64decode(json.loads(line)["audios"][0].split(",")[-1]))
+            out = os.path.join(outdir, f"{self.name}_polished.mp3")
+            # ACE renders hot; bring it back to the same loudness as the clean
+            # master so an A/B isn't just "the louder one sounds better"
+            rc, _o, err = _run([_ffmpeg(), "-y", "-v", "error", "-i", raw, "-af",
+                                "loudnorm=I=-14:TP=-1.0:LRA=11",
+                                "-ar", "44100", "-c:a", "libmp3lame", "-q:a", "1",
+                                out], timeout=900)
+            if rc != 0:
+                raise RuntimeError("polish master failed: " + err[-200:])
+            return [os.path.relpath(out, COMPOSITIONS).replace("\\", "/")] + files
+        except Exception as e:
+            self.message = ((self.message + " · ") if self.message else "") + \
+                f"polish skipped ({e})"
+            return files
+        finally:
+            for p in (raw,):
+                try:
+                    os.remove(p)
+                except Exception:
+                    pass
+            try:
+                MGR.stop()
+            except Exception:
+                pass
+
+    def _run(self):
+        d = self._params
+        try:
+            # the editor path supplies a finished score; skip planning entirely
+            if d.get("_score"):
+                self._render(d["_score"], d)
+                return
+            lib = composer_library()
+            seconds = max(30, min(420, int(d.get("seconds") or 150)))
+            genre = (d.get("genre") or "synth-pop").strip()
+
+            plan, note = None, ""
+            if d.get("use_llm", True) and current_llm_model():
+                try:
+                    plan = self._plan_with_llm(d, lib)
+                except Exception as e:
+                    note = f"planner fell back to the {genre} template ({e})"
+            elif d.get("use_llm", True):
+                note = (f"no Language model loaded — arranged from the {genre} "
+                        f"template")
+            if plan is None:
+                plan = {"genre": genre, "planner": "template"}
+            plan.setdefault("genre", genre)
+            plan.setdefault("title", (d.get("title") or "").strip() or None)
+            if not plan.get("title"):
+                plan["title"] = _safe_name(self.name).replace("_", " ").title()
+            plan["brief"] = (d.get("brief") or "").strip()
+            if d.get("key"):
+                plan["key"] = d["key"]
+            if int(d.get("bpm") or 0):
+                plan["bpm"] = int(d["bpm"])
+            if int(d.get("seed", -1)) >= 0:
+                plan["seed"] = int(d["seed"])
+            # composerkit fits these AFTER any template substitution, so they
+            # apply whether the structure came from the planner or a template
+            plan["target_seconds"] = seconds
+            plan["target_tracks"] = max(3, min(9, int(d.get("tracks") or 6)))
+            plan["humanize"] = bool(d.get("humanize", True))
+            if note:
+                self.message = note
+
+            if self.stop_flag:
+                raise RuntimeError("cancelled")
+            self.step = 1
+            self.current = "writing the parts"
+            self._render(plan, d)
+        except Exception as e:
+            self.state = "cancelled" if str(e) == "cancelled" else "error"
+            self.message = str(e)
+            self._proc = None
+        finally:
+            try:
+                os.remove(os.path.join(COMPOSITIONS, self.name, "progress.json"))
+            except Exception:
+                pass
+
+    def _render(self, plan: dict, d: dict):
+        """Hand a plan to composerkit and collect the result. Shared by the
+        compose-from-a-brief path and the editor's re-render, so both get the
+        same progress reporting, cancellation and polish handling."""
+        try:
+            outdir = os.path.join(COMPOSITIONS, self.name)
+            os.makedirs(outdir, exist_ok=True)
+            planpath = os.path.join(outdir, "plan.json")
+            with open(planpath, "w", encoding="utf-8") as f:
+                json.dump(plan, f, indent=2)
+
+            cmd = [LULLABY_PY, COMPOSERKIT, "render", "--score", planpath,
+                   "--out", os.path.join(outdir, self.name)]
+            if not d.get("stems", True):
+                cmd.append("--no-stems")
+            env = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
+            self._proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                                          stderr=subprocess.PIPE, text=True,
+                                          encoding="utf-8", errors="replace",
+                                          env=env, **NOWIN)
+            out, err = self._proc.communicate(timeout=1800)
+            rc = self._proc.returncode
+            self._proc = None
+            if self.stop_flag:
+                raise RuntimeError("cancelled")
+            line = (out or "").strip().splitlines()[-1] if (out or "").strip() else ""
+            if rc != 0 or not line.startswith("{"):
+                raise RuntimeError((err or out or "render failed").strip()[-400:])
+            result = json.loads(line)
+
+            self.plan = result.get("score")
+            self.files = [os.path.relpath(f, COMPOSITIONS).replace("\\", "/")
+                          for f in result.get("files", [])]
+            # polish appends to the list the UI actually reads, and works in the
+            # same COMPOSITIONS-relative form
+            self.files = self._apply_polish(outdir, result)
+            self.step = self.total
+            self.state = "done"
+            self.current = ""
+            mins = int(result.get("duration", 0) // 60)
+            secs = int(result.get("duration", 0) % 60)
+            self.message = ((self.message + " · ") if self.message else "") + \
+                f"{mins}:{secs:02d} · {len(self.plan.get('instruments', []))} tracks"
+        except Exception as e:
+            self.state = "cancelled" if str(e) == "cancelled" else "error"
+            self.message = str(e)
+            self._proc = None
+        finally:
+            try:
+                os.remove(os.path.join(COMPOSITIONS, self.name, "progress.json"))
+            except Exception:
+                pass
+
+
+COMPOSERJOB = ComposerJob()
+
+
 # ---- HTTP -------------------------------------------------------------------
 POST_ROUTES = {
     "/api/load": lambda d: MGR.load(d.get("worker", ""), d),
@@ -2605,6 +4311,20 @@ POST_ROUTES = {
     "/api/story_export": lambda d: story_export(d.get("id", "")),
     # Audiobook
     "/api/audiobook_start": lambda d: AUDIOBOOKJOB.start(d),
+    # Lullaby Studio
+    "/api/lullaby_start": lambda d: LULLABYJOB.start(d),
+    "/api/lullaby_analyze": lambda d: LULLABYJOB.analyze(d),
+    "/api/lullaby_render": lambda d: LULLABYJOB.render(d),
+    # Track Splitter
+    "/api/split_start": lambda d: SPLITJOB.start(d),
+    # Sprite Studio
+    "/api/sprite_start": lambda d: SPRITEJOB.start(d),
+    "/api/sprite_cancel": lambda d: SPRITEJOB.cancel(),
+    "/api/sprite_reroll": lambda d: SPRITEJOB.reroll(d),
+    # Composer
+    "/api/composer_start": lambda d: COMPOSERJOB.start(d),
+    "/api/composer_cancel": lambda d: COMPOSERJOB.cancel(),
+    "/api/composer_rerender": lambda d: COMPOSERJOB.rerender(d),
 }
 
 
@@ -2612,11 +4332,13 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
-    def _send(self, code, body, ctype="application/json"):
+    def _send(self, code, body, ctype="application/json", extra: dict = None):
         data = body if isinstance(body, bytes) else body.encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
+        for k, v in (extra or {}).items():
+            self.send_header(k, v)
         self.end_headers()
         self.wfile.write(data)
 
@@ -2636,10 +4358,139 @@ class Handler(BaseHTTPRequestHandler):
         with open(safe, "rb") as f:
             shutil.copyfileobj(f, self.wfile)
 
+    def _serve_range(self, path, ctype, disposition=None):
+        """Serve a file with HTTP Range support (206 Partial Content) — without
+        this, a browser's <audio> element can't seek ahead of what it has
+        already downloaded, so scrubbing a multi-MB preview silently does
+        nothing until the whole file finishes loading."""
+        size = os.path.getsize(path)
+        start, end, status = 0, size - 1, 200
+        rng = self.headers.get("Range")
+        if rng and rng.startswith("bytes="):
+            try:
+                a, _, b = rng[len("bytes="):].partition("-")
+                if a:
+                    start = int(a)
+                if b:
+                    end = min(int(b), size - 1)
+                if 0 <= start <= end < size:
+                    status = 206
+                else:
+                    start, end = 0, size - 1
+            except ValueError:
+                start, end = 0, size - 1
+        length = end - start + 1
+        self.send_response(status)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Content-Length", str(length))
+        if status == 206:
+            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        if disposition:
+            self.send_header("Content-Disposition", disposition)
+        self.end_headers()
+        with open(path, "rb") as f:
+            f.seek(start)
+            remaining = length
+            while remaining > 0:
+                data = f.read(min(65536, remaining))
+                if not data:
+                    break
+                self.wfile.write(data)
+                remaining -= len(data)
+
+    def _serve_lullaby_file(self):
+        from urllib.parse import unquote, urlparse
+        rel = unquote(urlparse(self.path).path[len("/lullabies/"):])
+        base = os.path.normpath(LULLABIES)
+        safe = os.path.normpath(os.path.join(base, rel))
+        if not safe.startswith(base + os.sep) or not os.path.isfile(safe):
+            self._send(404, json.dumps({"error": "not found"}))
+            return
+        ctype = "audio/mpeg" if safe.lower().endswith(".mp3") else "audio/wav"
+        self._serve_range(safe, ctype, 'inline; filename="' + os.path.basename(safe) + '"')
+
+    PREVIEW_FILES = {
+        # /lullaby_preview/<name>/<key>.mp3 -> file in the song's work dir
+        f"stem_{s}.mp3": f"stem_{s}_preview.mp3"
+        for s in ("vocals", "guitar", "piano", "other", "bass", "drums")
+    }
+
+    def _serve_lullaby_preview(self):
+        """Per-stem audition mp3s out of the lullabykit work dir:
+        /lullaby_preview/<name>/stem_<key>.mp3"""
+        from urllib.parse import unquote, urlparse
+        parts = unquote(urlparse(self.path).path).split("/")
+        if len(parts) != 4 or parts[3] not in self.PREVIEW_FILES:
+            self._send(404, json.dumps({"error": "not found"}))
+            return
+        name = _safe_name(parts[2])
+        safe = os.path.join(LULLABYKIT, "work", f"lullaby_src_{name}",
+                            self.PREVIEW_FILES[parts[3]])
+        if not os.path.isfile(safe):
+            self._send(404, json.dumps({"error": "not found"}))
+            return
+        self._serve_range(safe, "audio/mpeg")
+
+    COMPOSER_TYPES = {".mp3": "audio/mpeg", ".wav": "audio/wav",
+                      ".flac": "audio/flac", ".mid": "audio/midi",
+                      ".md": "text/markdown; charset=utf-8",
+                      ".json": "application/json"}
+
+    def _serve_composition_file(self):
+        from urllib.parse import unquote, urlparse
+        rel = unquote(urlparse(self.path).path[len("/compositions/"):])
+        base = os.path.normpath(COMPOSITIONS)
+        safe = os.path.normpath(os.path.join(base, rel))
+        if not safe.startswith(base + os.sep) or not os.path.isfile(safe):
+            self._send(404, json.dumps({"error": "not found"}))
+            return
+        ext = os.path.splitext(safe)[1].lower()
+        ctype = self.COMPOSER_TYPES.get(ext)
+        if not ctype:                       # never hand out _work scratch files
+            self._send(404, json.dumps({"error": "not found"}))
+            return
+        # audio needs Range so the player can scrub; MIDI is a download
+        disp = ("attachment" if ext == ".mid" else "inline") + \
+               '; filename="' + os.path.basename(safe) + '"'
+        self._serve_range(safe, ctype, disp)
+
+    def _serve_split_file(self):
+        from urllib.parse import unquote, urlparse
+        rel = unquote(urlparse(self.path).path[len("/splits/"):])
+        base = os.path.normpath(SPLITS)
+        safe = os.path.normpath(os.path.join(base, rel))
+        if not safe.startswith(base + os.sep) or not os.path.isfile(safe):
+            self._send(404, json.dumps({"error": "not found"}))
+            return
+        ctype = "audio/mpeg" if safe.lower().endswith(".mp3") else "audio/wav"
+        self._serve_range(safe, ctype, 'inline; filename="' + os.path.basename(safe) + '"')
+
+    def _serve_sprite_file(self):
+        from urllib.parse import unquote, urlparse
+        rel = unquote(urlparse(self.path).path[len("/sprites/"):])
+        base = os.path.normpath(SPRITES)
+        safe = os.path.normpath(os.path.join(base, rel))
+        if not safe.startswith(base + os.sep) or not os.path.isfile(safe):
+            self._send(404, json.dumps({"error": "not found"}))
+            return
+        ctype = "image/png" if safe.lower().endswith(".png") else "application/json"
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(os.path.getsize(safe)))
+        self.end_headers()
+        with open(safe, "rb") as f:
+            shutil.copyfileobj(f, self.wfile)
+
     def do_GET(self):
         if self.path in ("/", "/index.html"):
             with open(os.path.join(HERE, "index.html"), "rb") as f:
-                self._send(200, f.read(), "text/html; charset=utf-8")
+                # no-store: the UI is a single file edited in place during
+                # development, and without this the browser happily serves a
+                # cached copy — new panels and controls silently don't appear
+                self._send(200, f.read(), "text/html; charset=utf-8",
+                           extra={"Cache-Control": "no-store, must-revalidate",
+                                  "Pragma": "no-cache"})
         elif self.path == "/health":
             self._send(200, json.dumps({"ok": True}))
         elif self.path == "/api/status":
@@ -2666,10 +4517,100 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, json.dumps(STORYJOB.status()))
         elif self.path == "/api/audiobook_status":
             self._send(200, json.dumps(AUDIOBOOKJOB.status()))
+        elif self.path == "/api/lullaby_status":
+            self._send(200, json.dumps(LULLABYJOB.status()))
+        elif self.path.startswith("/api/lullaby_info"):
+            from urllib.parse import urlparse, parse_qs
+            name = (parse_qs(urlparse(self.path).query).get("name", [""]) or [""])[0]
+            try:
+                self._send(200, json.dumps(lullaby_info(name)))
+            except Exception as e:
+                self._send(404, json.dumps({"error": str(e)}))
+        elif self.path.startswith("/lullaby_preview/"):
+            self._serve_lullaby_preview()
+        elif self.path.startswith("/lullabies/"):
+            self._serve_lullaby_file()
+        elif self.path == "/api/split_status":
+            self._send(200, json.dumps(SPLITJOB.status()))
+        elif self.path == "/api/split_list":
+            self._send(200, json.dumps({"splits": split_list()}))
+        elif self.path.startswith("/api/split_zip"):
+            from urllib.parse import urlparse, parse_qs
+            name = (parse_qs(urlparse(self.path).query).get("name", [""]) or [""])[0]
+            try:
+                data = split_zip_bytes(name)
+                self.send_response(200)
+                self.send_header("Content-Type", "application/zip")
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Content-Disposition",
+                                 'attachment; filename="%s.zip"' % (_safe_name(name) or "tracks"))
+                self.end_headers()
+                self.wfile.write(data)
+            except Exception as e:
+                self._send(404, json.dumps({"error": str(e)}))
+        elif self.path.startswith("/splits/"):
+            self._serve_split_file()
         elif self.path == "/api/refs":
             self._send(200, json.dumps({"refs": list_refs()}))
         elif self.path.startswith("/audiobooks/"):
             self._serve_audiobook_file()
+        elif self.path == "/api/composer_status":
+            self._send(200, json.dumps(COMPOSERJOB.status()))
+        elif self.path == "/api/composer_library":
+            try:
+                self._send(200, json.dumps(composer_library()))
+            except Exception as e:
+                self._send(500, json.dumps({"error": str(e)}))
+        elif self.path == "/api/composer_list":
+            self._send(200, json.dumps({"songs": composer_list()}))
+        elif self.path.startswith("/api/composer_info"):
+            from urllib.parse import urlparse, parse_qs
+            name = (parse_qs(urlparse(self.path).query).get("name", [""]) or [""])[0]
+            try:
+                self._send(200, json.dumps(composer_info(name)))
+            except Exception as e:
+                self._send(404, json.dumps({"error": str(e)}))
+        elif self.path.startswith("/api/composer_notes"):
+            from urllib.parse import urlparse, parse_qs
+            name = (parse_qs(urlparse(self.path).query).get("name", [""]) or [""])[0]
+            try:
+                self._send(200, json.dumps(composer_notes(name)))
+            except Exception as e:
+                self._send(404, json.dumps({"error": str(e)}))
+        elif self.path.startswith("/api/composer_zip"):
+            from urllib.parse import urlparse, parse_qs
+            name = (parse_qs(urlparse(self.path).query).get("name", [""]) or [""])[0]
+            try:
+                data = composer_zip_bytes(name)
+                self.send_response(200)
+                self.send_header("Content-Type", "application/zip")
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Content-Disposition",
+                                 'attachment; filename="%s.zip"' % (_safe_name(name) or "song"))
+                self.end_headers()
+                self.wfile.write(data)
+            except Exception as e:
+                self._send(404, json.dumps({"error": str(e)}))
+        elif self.path.startswith("/compositions/"):
+            self._serve_composition_file()
+        elif self.path == "/api/sprite_status":
+            self._send(200, json.dumps(SPRITEJOB.status()))
+        elif self.path.startswith("/api/sprite_zip"):
+            from urllib.parse import urlparse, parse_qs
+            name = (parse_qs(urlparse(self.path).query).get("name", [""]) or [""])[0]
+            try:
+                data = sprite_zip_bytes(name)
+                self.send_response(200)
+                self.send_header("Content-Type", "application/zip")
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Content-Disposition",
+                                 'attachment; filename="%s.zip"' % (_safe_name(name) or "sprites"))
+                self.end_headers()
+                self.wfile.write(data)
+            except Exception as e:
+                self._send(404, json.dumps({"error": str(e)}))
+        elif self.path.startswith("/sprites/"):
+            self._serve_sprite_file()
         elif self.path.startswith("/api/story_load"):
             from urllib.parse import urlparse, parse_qs
             sid = (parse_qs(urlparse(self.path).query).get("id", [""]) or [""])[0]
@@ -2687,7 +4628,10 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             n = int(self.headers.get("Content-Length", 0))
-            d = json.loads(self.rfile.read(n).decode("utf-8") or "{}")
+            # errors="replace": browsers always send UTF-8, but a hand-rolled
+            # client (curl on a cp1252 console, a script) sending a stray byte
+            # should not fail with an opaque codec traceback
+            d = json.loads(self.rfile.read(n).decode("utf-8", "replace") or "{}")
             self._send(200, json.dumps(fn(d)))
         except Exception as e:
             self._send(500, json.dumps({"error": str(e)}))
@@ -2719,7 +4663,4091 @@ if __name__ == "__main__":
     ThreadingHTTPServer((host, port), Handler).serve_forever()
 ```
 
-## File 2 of 23 — `%USERPROFILE%\local-ai-studio\index.html`
+## File 2 of 27 — `%USERPROFILE%\local-ai-studio\spritekit.py`
+
+```python
+#!/usr/bin/env python3
+"""spritekit: post-process generated sprite frames for the Sprite Studio tab.
+
+Runs under ComfyUI's venv python (has Pillow; rembg optional for cutout).
+Two subcommands, both driven by server.py's SpriteJob:
+
+  action  --dir DIR --size N [--cutout] --sheet OUT.png
+      Process one action folder in place: optional rembg background removal
+      (true alpha), downscale each frame_*.png to N x N, then write a
+      horizontal strip sheet of the processed frames to OUT.png.
+
+  combine --project DIR --size N --order a,b,c --out spritesheet.png
+      Build one combined sheet (one row per action, padded to the widest row)
+      from the already-processed frames, plus OUT's .json metadata sidecar
+      (cell size, row/frame-count per action) for game-engine import.
+
+Exit codes: 0 ok · 1 bad args / IO error · 3 cutout requested but rembg missing.
+"""
+from __future__ import annotations
+
+import argparse
+import glob
+import json
+import os
+import sys
+
+
+def frames_in(d: str) -> list[str]:
+    return sorted(glob.glob(os.path.join(d, "frame_*.png")))
+
+
+def load_cutout(enabled: bool):
+    """Return a cutout(img)->img callable, or None. Missing rembg -> exit 3 so the
+    server can degrade gracefully (keep opaque frames) instead of failing the job."""
+    if not enabled:
+        return None
+    try:
+        from rembg import remove, new_session
+    except ImportError:
+        print("rembg not installed (pip install rembg onnxruntime into ComfyUI's venv)",
+              file=sys.stderr)
+        sys.exit(3)
+    session = new_session(os.environ.get("REMBG_MODEL", "u2net"))
+    return lambda img: remove(img, session=session, post_process_mask=True)
+
+
+def cmd_action(a) -> int:
+    from PIL import Image
+    paths = frames_in(a.dir)
+    if not paths:
+        print(f"no frame_*.png in {a.dir}", file=sys.stderr)
+        return 1
+    cutout = load_cutout(a.cutout)
+    frames = []
+    for p in paths:
+        img = Image.open(p).convert("RGBA")
+        if cutout:
+            img = cutout(img)
+        if img.width != a.size or img.height != a.size:
+            img = img.resize((a.size, a.size), Image.LANCZOS)
+        img.save(p)          # processed in place — the UI serves these paths
+        frames.append(img)
+    sheet = Image.new("RGBA", (a.size * len(frames), a.size), (0, 0, 0, 0))
+    for i, f in enumerate(frames):
+        sheet.paste(f, (i * a.size, 0))
+    sheet.save(a.sheet)
+    print(json.dumps({"frames": len(frames), "sheet": a.sheet}))
+    return 0
+
+
+def cmd_frame(a) -> int:
+    """Process ONE frame in place (re-rolls): cutout + resize, nothing else. Keeps
+    already-processed neighbours untouched — re-running rembg on frames that
+    already have clean alpha erodes their edges."""
+    from PIL import Image
+    if not os.path.isfile(a.file):
+        print(f"not found: {a.file}", file=sys.stderr)
+        return 1
+    cutout = load_cutout(a.cutout)
+    img = Image.open(a.file).convert("RGBA")
+    if cutout:
+        img = cutout(img)
+    if img.size != (a.size, a.size):
+        img = img.resize((a.size, a.size), Image.LANCZOS)
+    img.save(a.file)
+    print(json.dumps({"frame": a.file}))
+    return 0
+
+
+def cmd_strip(a) -> int:
+    """Assemble an action's strip sheet from already-processed frames (no cutout,
+    no resize) — used after a single-frame re-roll."""
+    from PIL import Image
+    paths = frames_in(a.dir)
+    if not paths:
+        print(f"no frame_*.png in {a.dir}", file=sys.stderr)
+        return 1
+    sheet = Image.new("RGBA", (a.size * len(paths), a.size), (0, 0, 0, 0))
+    for i, p in enumerate(paths):
+        sheet.paste(Image.open(p).convert("RGBA"), (i * a.size, 0))
+    sheet.save(a.sheet)
+    print(json.dumps({"frames": len(paths), "sheet": a.sheet}))
+    return 0
+
+
+def cmd_combine(a) -> int:
+    from PIL import Image
+    order = [x for x in (a.order or "").split(",") if x]
+    actions = [x for x in order if frames_in(os.path.join(a.project, x))] or \
+              sorted(d for d in os.listdir(a.project)
+                     if frames_in(os.path.join(a.project, d)))
+    if not actions:
+        print(f"no action folders with frames in {a.project}", file=sys.stderr)
+        return 1
+    rows = [(act, frames_in(os.path.join(a.project, act))) for act in actions]
+    cols = max(len(fr) for _, fr in rows)
+    sheet = Image.new("RGBA", (a.size * cols, a.size * len(rows)), (0, 0, 0, 0))
+    meta = {"cell": [a.size, a.size], "columns": cols, "actions": {}}
+    for r, (act, fr) in enumerate(rows):
+        for c, p in enumerate(fr):
+            sheet.paste(Image.open(p).convert("RGBA"), (c * a.size, r * a.size))
+        meta["actions"][act] = {"row": r, "frames": len(fr)}
+    sheet.save(a.out)
+    with open(os.path.splitext(a.out)[0] + ".json", "w", encoding="utf-8") as f:
+        json.dump(meta, f, indent=2)
+    print(json.dumps({"actions": len(rows), "columns": cols, "sheet": a.out}))
+    return 0
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="Sprite frame post-processing for Sprite Studio.")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    p1 = sub.add_parser("action", help="cutout/resize one action folder + strip sheet")
+    p1.add_argument("--dir", required=True)
+    p1.add_argument("--size", type=int, default=256)
+    p1.add_argument("--cutout", action="store_true")
+    p1.add_argument("--sheet", required=True)
+    p2 = sub.add_parser("combine", help="combined sheet + json metadata for a project")
+    p2.add_argument("--project", required=True)
+    p2.add_argument("--size", type=int, default=256)
+    p2.add_argument("--order", default="")
+    p2.add_argument("--out", required=True)
+    p3 = sub.add_parser("frame", help="cutout/resize a single frame in place (re-roll)")
+    p3.add_argument("--file", required=True)
+    p3.add_argument("--size", type=int, default=256)
+    p3.add_argument("--cutout", action="store_true")
+    p4 = sub.add_parser("strip", help="rebuild an action strip from processed frames")
+    p4.add_argument("--dir", required=True)
+    p4.add_argument("--size", type=int, default=256)
+    p4.add_argument("--sheet", required=True)
+    a = ap.parse_args()
+    return {"action": cmd_action, "combine": cmd_combine,
+            "frame": cmd_frame, "strip": cmd_strip}[a.cmd](a)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+```
+
+## File 3 of 27 — `%USERPROFILE%\local-ai-studio\composerkit.py`
+
+```python
+#!/usr/bin/env python3
+"""composerkit: turn a song PLAN into a finished, mixed instrumental track.
+
+This is the Composer tab's engine — the local-studio answer to "pick the
+instruments you need, find free plugins for them, then arrange, mix and
+automate the song in a DAW":
+
+  plugins     -> the General MIDI instrument set inside the bundled SoundFont.
+                 Free, permissively licensed, already on this disk, and inside
+                 the 800 MB budget — see soundfont_library(). 128 melodic
+                 programs + drum kits, played by FluidSynth, which is the
+                 sampler/"plugin host".
+  arrangement -> the LLM decides the MUSICAL DIRECTION (key, tempo, structure,
+                 which instrument plays which role, the chord progression per
+                 section, the FX and automation moves). This module writes the
+                 actual notes from that direction, because note-level output
+                 from a 20B local model is not reliable enough to listen to —
+                 same division of labour as lullabykit (theory in code).
+  mixing      -> every track is rendered to its own stem, then run through its
+                 own chain: saturation, tone shelves, a time-varying lowpass,
+                 tempo-synced ping-pong delay and convolution reverb (both with
+                 AUTOMATED send levels), tremolo, volume and pan automation.
+  production  -> risers into a chorus, sub impacts on the downbeat, downlifters
+                 out of a section, drop silences, and optional kick sidechain
+                 ducking, all synthesized in the audio domain.
+
+Everything is deterministic given the score's seed, so a render can be
+reproduced exactly and a plan can be tweaked one field at a time.
+
+Outputs (into --out's directory):
+  <name>.mp3 / <name>.wav   the finished master
+  <name>.mid                the whole arrangement as multitrack MIDI, with pan
+                            and volume CCs — open it in a real DAW and swap in
+                            your own plugins
+  stems/<track>.flac        per-instrument stems (post-FX, pre-master)
+  score.json                the normalized plan that was actually rendered
+  arrangement.md            human-readable score notes
+
+Usage:
+  python composerkit.py render --score score.json --out compositions/x/x
+  python composerkit.py library          # soundfonts + instrument catalog (JSON)
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import os
+import random
+import shutil
+import subprocess
+import sys
+import time
+import zlib
+from pathlib import Path
+
+try:
+    import numpy as np
+except ImportError:     # server.py imports this module with the stdlib python
+    np = None           # just for the catalogs below; rendering needs the venv
+
+ROOT = Path(__file__).resolve().parent
+LULLABYKIT = ROOT / "lullabykit"
+FLUIDSYNTH = LULLABYKIT / "bin" / "fluidsynth" / "bin" / "fluidsynth.exe"
+SOUNDFONTS = LULLABYKIT / "soundfonts"
+SF_GM = SOUNDFONTS / "FluidR3_GM.sf2"
+
+SR = 44100
+# The plugin budget from the brief. FluidR3_GM (141 MB) passes comfortably.
+SF_BUDGET_MB = 800
+
+
+# ============================================================ instrument catalog
+
+GM_INSTRUMENTS = [
+    "Acoustic Grand Piano", "Bright Acoustic Piano", "Electric Grand Piano",
+    "Honky-tonk Piano", "Electric Piano 1", "Electric Piano 2", "Harpsichord",
+    "Clavinet", "Celesta", "Glockenspiel", "Music Box", "Vibraphone", "Marimba",
+    "Xylophone", "Tubular Bells", "Dulcimer", "Drawbar Organ", "Percussive Organ",
+    "Rock Organ", "Church Organ", "Reed Organ", "Accordion", "Harmonica",
+    "Tango Accordion", "Acoustic Guitar (nylon)", "Acoustic Guitar (steel)",
+    "Electric Guitar (jazz)", "Electric Guitar (clean)", "Electric Guitar (muted)",
+    "Overdriven Guitar", "Distortion Guitar", "Guitar Harmonics", "Acoustic Bass",
+    "Electric Bass (finger)", "Electric Bass (pick)", "Fretless Bass", "Slap Bass 1",
+    "Slap Bass 2", "Synth Bass 1", "Synth Bass 2", "Violin", "Viola", "Cello",
+    "Contrabass", "Tremolo Strings", "Pizzicato Strings", "Orchestral Harp",
+    "Timpani", "String Ensemble 1", "String Ensemble 2", "Synth Strings 1",
+    "Synth Strings 2", "Choir Aahs", "Voice Oohs", "Synth Voice", "Orchestra Hit",
+    "Trumpet", "Trombone", "Tuba", "Muted Trumpet", "French Horn", "Brass Section",
+    "Synth Brass 1", "Synth Brass 2", "Soprano Sax", "Alto Sax", "Tenor Sax",
+    "Baritone Sax", "Oboe", "English Horn", "Bassoon", "Clarinet", "Piccolo",
+    "Flute", "Recorder", "Pan Flute", "Blown Bottle", "Shakuhachi", "Whistle",
+    "Ocarina", "Lead 1 (square)", "Lead 2 (sawtooth)", "Lead 3 (calliope)",
+    "Lead 4 (chiff)", "Lead 5 (charang)", "Lead 6 (voice)", "Lead 7 (fifths)",
+    "Lead 8 (bass + lead)", "Pad 1 (new age)", "Pad 2 (warm)", "Pad 3 (polysynth)",
+    "Pad 4 (choir)", "Pad 5 (bowed)", "Pad 6 (metallic)", "Pad 7 (halo)",
+    "Pad 8 (sweep)", "FX 1 (rain)", "FX 2 (soundtrack)", "FX 3 (crystal)",
+    "FX 4 (atmosphere)", "FX 5 (brightness)", "FX 6 (goblins)", "FX 7 (echoes)",
+    "FX 8 (sci-fi)", "Sitar", "Banjo", "Shamisen", "Koto", "Kalimba", "Bag pipe",
+    "Fiddle", "Shanai", "Tinkle Bell", "Agogo", "Steel Drums", "Woodblock",
+    "Taiko Drum", "Melodic Tom", "Synth Drum", "Reverse Cymbal",
+    "Guitar Fret Noise", "Breath Noise", "Seashore", "Bird Tweet",
+    "Telephone Ring", "Helicopter", "Applause", "Gunshot",
+]
+
+# The menu the planner actually chooses from — the full 128 include sound effects
+# and novelty patches that wreck a mix. Grouped by the job they do so the model
+# reasons about ROLES ("what does this song need?") instead of patch names.
+INSTRUMENT_MENU = {
+    "keys": [0, 1, 4, 5, 6, 11, 16, 18, 19, 21],
+    "guitar": [24, 25, 26, 27, 28, 29, 30],
+    "bass": [32, 33, 34, 35, 36, 38, 39],
+    "strings": [40, 42, 45, 46, 48, 49, 50, 44],
+    "brass": [56, 57, 58, 60, 61, 62, 63],
+    "winds": [64, 65, 66, 68, 71, 73, 74, 75],
+    "synth_lead": [80, 81, 82, 84, 85, 87],
+    "synth_pad": [88, 89, 90, 91, 92, 94, 95],
+    "bells_plucked": [8, 9, 10, 12, 13, 14, 46, 108],
+    "voices": [52, 53, 54],
+    "world": [104, 105, 106, 107, 114, 116],
+}
+
+# What this engine knows how to WRITE. The planner assigns one to each track;
+# the program number only decides the timbre, the role decides the notes.
+ROLES = {
+    "drums": "full kit — kick/snare/hats/cymbals/fills (always GM channel 10)",
+    "perc": "auxiliary percussion — shaker, tambourine, congas (channel 10)",
+    "bass": "bass line following the chord roots",
+    "chords": "rhythmic chord comping — stabs, strums, piano rhythm",
+    "pad": "long sustained chords underneath everything",
+    "arp": "arpeggio running through the chord tones",
+    "lead": "the main melody / hook",
+    "counter": "counter-melody answering the lead in its gaps",
+}
+MELODIC_ROLES = ("bass", "chords", "pad", "arp", "lead", "counter")
+
+# role -> (lo, hi, target_center) MIDI register + default mix level
+ROLE_REGISTER = {
+    "bass": (28, 45, 36), "chords": (50, 76, 62), "pad": (46, 79, 60),
+    "arp": (60, 89, 74), "lead": (65, 88, 75), "counter": (57, 79, 67),
+}
+ROLE_LEVEL = {"drums": 1.0, "perc": 0.32, "bass": 0.92, "chords": 0.55,
+              "pad": 0.42, "arp": 0.48, "lead": 0.85, "counter": 0.45}
+
+# GM percussion note numbers
+DRUM = {"kick": 36, "kick2": 35, "snare": 38, "snare2": 40, "clap": 39,
+        "stick": 37, "hat": 42, "pedalhat": 44, "openhat": 46, "crash": 49,
+        "crash2": 57, "splash": 55, "ride": 51, "ridebell": 53, "tom_lo": 41,
+        "tom_mid": 45, "tom_hi": 48, "tom_top": 50, "tamb": 54, "cowbell": 56,
+        "shaker": 70, "cabasa": 69, "conga_hi": 63, "conga_lo": 64, "claves": 75}
+
+
+def soundfont_library() -> dict:
+    """The General MIDI banks this tab can play, and whether they fit the budget.
+
+    Only GM banks are listed, because a GM bank is the only thing the Composer
+    plays — every instrument is a program number in one. Specialist
+    single-instrument libraries that happen to sit in the soundfonts folder (the
+    Salamander grand, which the Lullaby kit uses) are deliberately not surfaced
+    here: listing a font this tab never loads was confusing, and routing piano
+    tracks to a 1.2 GB font just to gain one patch was not worth the size or the
+    inconsistency with every other instrument."""
+    fonts = []
+    if SOUNDFONTS.is_dir():
+        for hit in sorted(SOUNDFONTS.glob("**/*.sf[23]")):
+            # "is this a full General MIDI bank?" — the bundled font is FluidR3,
+            # but accept any drop-in GM bank so swapping the library works
+            low = hit.name.lower()
+            if not (low.startswith("fluidr3") or "_gm" in low
+                    or "gm." in low or "general" in low):
+                continue
+            mb = hit.stat().st_size / (1024 * 1024)
+            fonts.append({"name": hit.name,
+                          "path": str(hit),
+                          "mb": round(mb, 1),
+                          "gm": True,
+                          "within_budget": mb <= SF_BUDGET_MB,
+                          "used_for": "every instrument"})
+    return {
+        "budget_mb": SF_BUDGET_MB,
+        "soundfonts": fonts,
+        "usable": [f for f in fonts if f["within_budget"] and f["gm"]],
+        "fluidsynth": str(FLUIDSYNTH) if FLUIDSYNTH.is_file() else None,
+        "instruments": {group: [{"program": p, "name": GM_INSTRUMENTS[p]}
+                                for p in progs]
+                        for group, progs in INSTRUMENT_MENU.items()},
+        "roles": ROLES,
+        # the whole GM map, for the editor's instrument dropdown — the curated
+        # menu above is for steering the planner, but a human editing a track
+        # should be able to reach any patch
+        "gm_all": list(GM_INSTRUMENTS),
+        # each style's home tempo/key, so the planner can be given a band to aim
+        # at instead of inferring one from an example (which it just copies)
+        "genre_hints": {g: {"bpm": t["bpm"], "key": t["key"]}
+                        for g, t in GENRE_TEMPLATES.items()},
+    }
+
+
+# ============================================================ music theory
+
+NOTE_PC = {"C": 0, "C#": 1, "DB": 1, "D": 2, "D#": 3, "EB": 3, "E": 4, "FB": 4,
+           "F": 5, "F#": 6, "GB": 6, "G": 7, "G#": 8, "AB": 8, "A": 9, "A#": 10,
+           "BB": 10, "B": 11, "CB": 11}
+PC_NAME = ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"]
+MAJOR = [0, 2, 4, 5, 7, 9, 11]
+MINOR = [0, 2, 3, 5, 7, 8, 10]
+
+# chord quality -> intervals from the root. Ordered longest-suffix-first when
+# matched so "m7b5" doesn't get eaten by "m".
+QUALITIES = [
+    ("maj13", [0, 4, 7, 11, 14, 21]), ("maj11", [0, 4, 7, 11, 17]),
+    ("maj9", [0, 4, 7, 11, 14]), ("maj7", [0, 4, 7, 11]),
+    ("m7b5", [0, 3, 6, 10]), ("dim7", [0, 3, 6, 9]), ("m11", [0, 3, 7, 10, 17]),
+    ("m9", [0, 3, 7, 10, 14]), ("m7", [0, 3, 7, 10]), ("m6", [0, 3, 7, 9]),
+    ("madd9", [0, 3, 7, 14]), ("mmaj7", [0, 3, 7, 11]),
+    ("sus2", [0, 2, 7]), ("sus4", [0, 5, 7]), ("7sus4", [0, 5, 7, 10]),
+    ("add9", [0, 4, 7, 14]), ("13", [0, 4, 7, 10, 21]), ("11", [0, 4, 7, 10, 17]),
+    ("9", [0, 4, 7, 10, 14]), ("7", [0, 4, 7, 10]), ("6", [0, 4, 7, 9]),
+    ("dim", [0, 3, 6]), ("aug", [0, 4, 8]), ("5", [0, 7]),
+    ("min", [0, 3, 7]), ("maj", [0, 4, 7]), ("m", [0, 3, 7]), ("", [0, 4, 7]),
+]
+
+
+def parse_key(text: str) -> tuple:
+    """'F# minor' / 'Bb' / 'a minor' -> (tonic_pc, 'minor'|'major')."""
+    s = (text or "C major").strip()
+    mode = "minor" if ("min" in s.lower() or s.rstrip().endswith("m")) else "major"
+    head = s.split()[0].rstrip("m") if " " in s else s.rstrip("m")
+    pc = NOTE_PC.get(head.upper().replace("♯", "#").replace("♭", "B"), 0)
+    return pc, mode
+
+
+def parse_chord(symbol: str, key_pc: int = 0, mode: str = "major") -> dict:
+    """Chord symbol -> {'symbol', 'root', 'ivs', 'bass'}.
+
+    Also accepts roman numerals (I, ii, V7, iv) because planners reach for them
+    constantly, and returns None for anything unparseable so the caller can
+    substitute a diatonic chord instead of rendering nonsense."""
+    s = (symbol or "").strip().replace("Δ", "maj7").replace("-", "m")
+    if not s:
+        return None
+    bass = None
+    if "/" in s:
+        s, _, b = s.partition("/")
+        bass = NOTE_PC.get(b.strip().upper(), None)
+
+    roman = _parse_roman(s, key_pc, mode)
+    if roman:
+        root, tail = roman
+    else:
+        head = s[:2] if len(s) > 1 and s[1] in "#b♯♭" else s[:1]
+        pc = NOTE_PC.get(head.upper().replace("♯", "#").replace("♭", "B"))
+        if pc is None:
+            return None
+        root, tail = pc, s[len(head):]
+
+    tail = tail.strip().lower().replace("min", "m").replace("major", "maj")
+    for name, ivs in QUALITIES:
+        if tail == name or (name and tail.startswith(name) and
+                            tail[len(name):] in ("", "9", "11", "13")):
+            return {"symbol": symbol.strip(), "root": root % 12,
+                    "ivs": list(ivs), "bass": bass}
+    return {"symbol": symbol.strip(), "root": root % 12,
+            "ivs": [0, 3, 7] if tail.startswith("m") else [0, 4, 7], "bass": bass}
+
+
+ROMAN = [("viii", 7), ("vii", 6), ("vi", 5), ("iv", 3), ("v", 4), ("iii", 2),
+         ("ii", 1), ("i", 0)]
+
+
+def _parse_roman(s: str, key_pc: int, mode: str):
+    """'bVII', 'iv', 'V7' -> (root_pc, quality_tail) — or None if not a numeral."""
+    body, flat = s, 0
+    if body[:1] in ("b", "#") and len(body) > 1 and body[1] in "iIvV":
+        flat = -1 if body[0] == "b" else 1
+        body = body[1:]
+    low = body.lower()
+    for numeral, degree in ROMAN:
+        if low.startswith(numeral):
+            scale = MAJOR if mode == "major" else MINOR
+            root = (key_pc + scale[degree % 7] + flat) % 12
+            tail = body[len(numeral):]
+            # lowercase numeral means minor unless the tail already says otherwise
+            if body[:len(numeral)].islower() and not tail[:3].lower() in (
+                    "dim", "aug", "maj", "sus"):
+                tail = "m" + tail if not tail.startswith("m") else tail
+            return root, tail
+    return None
+
+
+def diatonic_chords(key_pc: int, mode: str) -> list:
+    """A safe progression in the key — the fallback when a plan's chords don't
+    parse, and the source of template progressions."""
+    scale = MAJOR if mode == "major" else MINOR
+    quals = ([0, 3, 7], [0, 3, 7], [0, 4, 7], [0, 4, 7], [0, 4, 7], [0, 3, 7], [0, 3, 6]) \
+        if mode == "minor" else \
+        ([0, 4, 7], [0, 3, 7], [0, 3, 7], [0, 4, 7], [0, 4, 7], [0, 3, 7], [0, 3, 6])
+    out = []
+    for d in range(7):
+        root = (key_pc + scale[d]) % 12
+        ivs = list(quals[d])
+        out.append({"symbol": PC_NAME[root] + ("m" if ivs[1] == 3 else ""),
+                    "root": root, "ivs": ivs, "bass": None})
+    return out
+
+
+def scale_pitches(key_pc: int, mode: str) -> list:
+    return [(key_pc + s) % 12 for s in (MAJOR if mode == "major" else MINOR)]
+
+
+def detect_key_from_chords(sections: list) -> tuple:
+    """Best-fitting key for the progression that was actually written.
+
+    Planners routinely declare one key and then write a progression in another
+    ("C minor" over Dm-Gm-A7-Bb). The melody writers snap to the declared key's
+    scale, so a mismatch puts the tune a step off its own harmony — audible, and
+    the kind of thing that makes generated music sound broken. The chords are the
+    ground truth here, so they win. Returns (tonic_pc, mode, score, weight)."""
+    weights = {}
+    for sec in sections:
+        w = float(sec.get("bars") or 8)
+        for c in sec["chords"]:
+            for iv in c["ivs"]:
+                pc = (c["root"] + iv) % 12
+                # roots and thirds identify a key far better than upper extensions
+                weights[pc] = weights.get(pc, 0.0) + w * (2.0 if iv in (0, 3, 4) else 1.0)
+    total = sum(weights.values())
+    if not total:
+        return 0, "major", 0.0, 0.0
+    best = (0, "major", -1.0)
+    for tonic in range(12):
+        for mode in ("major", "minor"):
+            pcs = set(scale_pitches(tonic, mode))
+            fit = sum(w for pc, w in weights.items() if pc in pcs) / total
+            # a tonic that the progression actually leans on beats one it never plays
+            fit += 0.06 * (weights.get(tonic, 0.0) / total)
+            if fit > best[2]:
+                best = (tonic, mode, fit)
+    return best[0], best[1], best[2], total
+
+
+def key_fit(sections: list, key_pc: int, mode: str) -> float:
+    """How well one key explains the written chords (0-1)."""
+    weights = {}
+    for sec in sections:
+        w = float(sec.get("bars") or 8)
+        for c in sec["chords"]:
+            for iv in c["ivs"]:
+                pc = (c["root"] + iv) % 12
+                weights[pc] = weights.get(pc, 0.0) + w * (2.0 if iv in (0, 3, 4) else 1.0)
+    total = sum(weights.values())
+    if not total:
+        return 1.0
+    pcs = set(scale_pitches(key_pc, mode))
+    return sum(w for pc, w in weights.items() if pc in pcs) / total
+
+
+def degree_pitch(degree: int, key_pc: int, mode: str, base: int) -> int:
+    """Scale degree (0 = tonic, may run past an octave or below zero) -> MIDI."""
+    scale = MAJOR if mode == "major" else MINOR
+    octv, idx = divmod(degree, 7)
+    return base + 12 * octv + scale[idx]
+
+
+def register_base(key_pc: int, lo: int) -> int:
+    """Lowest MIDI tonic at or above `lo` — anchors a part in its register."""
+    return lo + ((key_pc - lo) % 12)
+
+
+def chord_pitches(chord: dict, lo: int, hi: int, size: int = 4,
+                  prev: list = None) -> list:
+    """Voice a chord inside [lo, hi], choosing the inversion that moves least
+    from the previous voicing. Without this the comping jumps an octave every
+    time the progression crosses C and the part stops sounding played."""
+    root = register_base(chord["root"], lo)
+    tones = [root + iv for iv in chord["ivs"]][:max(3, size)]
+    best, best_cost = tones, 1e9
+    for inv in range(len(tones)):
+        cand = tones[inv:] + [p + 12 for p in tones[:inv]]
+        cand = [p for p in cand if lo <= p <= hi]
+        if len(cand) < 2:
+            continue
+        center = (sum(prev) / len(prev)) if prev else (lo + hi) / 2
+        cost = abs(sum(cand) / len(cand) - center)
+        if cost < best_cost:
+            best, best_cost = cand, cost
+    return sorted(p for p in best if lo <= p <= hi)
+
+
+def nearest_chord_tone(pitch: int, chord: dict) -> int:
+    pcs = {(chord["root"] + iv) % 12 for iv in chord["ivs"]}
+    for delta in (0, -1, 1, -2, 2, -3, 3, 4, -4):
+        if (pitch + delta) % 12 in pcs:
+            return pitch + delta
+    return pitch
+
+
+# ============================================================ genre templates
+
+# Each template is a complete, listenable plan — used verbatim when no planner
+# model is loaded, and as the source of every default the planner leaves out.
+GENRE_TEMPLATES = {
+    "synth-pop": {
+        "bpm": 118, "key": "A minor", "sidechain": True,
+        "instruments": [
+            {"track": "drums", "role": "drums", "program": 0, "pan": 0.0},
+            {"track": "bass", "role": "bass", "program": 38, "pan": 0.0, "drive": 0.25},
+            {"track": "pad", "role": "pad", "program": 89, "pan": -0.3, "reverb": 0.7,
+             "automation": [{"param": "cutoff", "from": 0.25, "to": 1.0}]},
+            {"track": "arp", "role": "arp", "program": 81, "pan": 0.35, "delay": 0.3,
+             "automation": [{"param": "pan", "mode": "autopan", "depth": 0.45, "bars": 4}]},
+            {"track": "lead", "role": "lead", "program": 80, "pan": 0.0, "reverb": 0.35,
+             "delay": 0.25},
+            {"track": "keys", "role": "chords", "program": 4, "pan": 0.22, "reverb": 0.3},
+        ],
+        "sections": [
+            ("intro", 8, 0.28, ["pad", "arp"], ["riser"]),
+            ("verse", 16, 0.5, ["drums", "bass", "pad", "arp", "keys"], []),
+            ("pre-chorus", 8, 0.66, ["drums", "bass", "pad", "keys"], ["riser"]),
+            ("chorus", 16, 0.95, ["drums", "bass", "pad", "arp", "lead", "keys"], ["impact"]),
+            ("verse 2", 16, 0.55, ["drums", "bass", "pad", "arp", "keys"], ["downlifter"]),
+            ("bridge", 8, 0.42, ["pad", "keys", "lead"], ["riser"]),
+            ("chorus 2", 16, 1.0, ["drums", "bass", "pad", "arp", "lead", "keys"], ["drop"]),
+            ("outro", 8, 0.35, ["pad", "arp", "lead"], []),
+        ],
+        "progressions": {"verse": ["Am", "F", "C", "G"], "chorus": ["F", "C", "G", "Am"],
+                         "bridge": ["Dm", "Am", "Bb", "F"]},
+    },
+    "cinematic": {
+        "bpm": 84, "key": "D minor", "sidechain": False,
+        "instruments": [
+            {"track": "strings", "role": "pad", "program": 48, "pan": -0.2, "reverb": 0.85,
+             "automation": [{"param": "volume", "from": 0.4, "to": 1.0}]},
+            {"track": "cello", "role": "bass", "program": 42, "pan": 0.15, "reverb": 0.6},
+            {"track": "piano", "role": "chords", "program": 0, "pan": 0.25, "reverb": 0.55},
+            {"track": "horns", "role": "lead", "program": 60, "pan": 0.0, "reverb": 0.6},
+            {"track": "harp", "role": "arp", "program": 46, "pan": -0.4, "reverb": 0.5},
+            {"track": "timpani", "role": "drums", "program": 0, "pan": 0.0, "reverb": 0.7},
+        ],
+        "sections": [
+            ("intro", 8, 0.2, ["strings", "harp"], []),
+            ("build", 12, 0.5, ["strings", "cello", "piano", "harp"], ["riser"]),
+            ("theme", 16, 0.85, ["strings", "cello", "piano", "horns", "timpani"], ["impact"]),
+            ("breakdown", 8, 0.35, ["piano", "harp", "strings"], []),
+            ("climax", 16, 1.0, ["strings", "cello", "piano", "horns", "harp", "timpani"],
+             ["impact"]),
+            ("outro", 8, 0.25, ["strings", "harp"], ["downlifter"]),
+        ],
+        "progressions": {"verse": ["Dm", "Bb", "F", "C"], "chorus": ["Bb", "F", "Gm", "Dm"],
+                         "bridge": ["Gm", "Dm", "Eb", "Bb"]},
+    },
+    "lo-fi": {
+        "bpm": 82, "key": "F major", "sidechain": False,
+        "instruments": [
+            {"track": "drums", "role": "drums", "program": 0, "pan": 0.0, "tone": "warm"},
+            {"track": "bass", "role": "bass", "program": 33, "pan": 0.0},
+            {"track": "keys", "role": "chords", "program": 4, "pan": -0.25, "reverb": 0.45,
+             "delay": 0.2},
+            {"track": "vibes", "role": "lead", "program": 11, "pan": 0.3, "reverb": 0.5,
+             "delay": 0.3},
+            {"track": "pad", "role": "pad", "program": 89, "pan": 0.0, "reverb": 0.7},
+            {"track": "shaker", "role": "perc", "program": 0, "pan": 0.4},
+        ],
+        "sections": [
+            ("intro", 8, 0.3, ["keys", "pad"], []),
+            ("loop A", 16, 0.55, ["drums", "bass", "keys", "pad", "shaker"], []),
+            ("loop B", 16, 0.68, ["drums", "bass", "keys", "vibes", "pad", "shaker"], []),
+            ("break", 8, 0.35, ["keys", "pad", "vibes"], []),
+            ("loop C", 16, 0.7, ["drums", "bass", "keys", "vibes", "pad", "shaker"], []),
+            ("outro", 8, 0.3, ["keys", "pad"], []),
+        ],
+        "progressions": {"verse": ["Fmaj7", "Dm7", "Gm7", "C7"],
+                         "chorus": ["Bbmaj7", "Am7", "Dm7", "Gm7"],
+                         "bridge": ["Dm7", "Gm7", "C7", "Fmaj7"]},
+    },
+    "rock": {
+        "bpm": 138, "key": "E minor", "sidechain": False,
+        "instruments": [
+            {"track": "drums", "role": "drums", "program": 0, "pan": 0.0},
+            {"track": "bass", "role": "bass", "program": 34, "pan": 0.0, "drive": 0.3},
+            {"track": "rhythm", "role": "chords", "program": 29, "pan": -0.45, "drive": 0.45},
+            {"track": "rhythm2", "role": "chords", "program": 29, "pan": 0.45, "drive": 0.45},
+            {"track": "lead", "role": "lead", "program": 30, "pan": 0.1, "drive": 0.35,
+             "delay": 0.2, "reverb": 0.3},
+            {"track": "organ", "role": "pad", "program": 18, "pan": 0.0, "reverb": 0.35},
+        ],
+        "sections": [
+            ("intro", 8, 0.55, ["drums", "bass", "rhythm", "rhythm2"], []),
+            ("verse", 16, 0.6, ["drums", "bass", "rhythm", "organ"], []),
+            ("chorus", 16, 0.95, ["drums", "bass", "rhythm", "rhythm2", "lead", "organ"],
+             ["impact"]),
+            ("verse 2", 16, 0.62, ["drums", "bass", "rhythm", "organ"], []),
+            ("solo", 12, 0.9, ["drums", "bass", "rhythm", "rhythm2", "lead"], []),
+            ("chorus 2", 16, 1.0, ["drums", "bass", "rhythm", "rhythm2", "lead", "organ"],
+             ["impact"]),
+            ("outro", 8, 0.5, ["drums", "bass", "rhythm", "organ"], ["downlifter"]),
+        ],
+        "progressions": {"verse": ["Em", "C", "G", "D"], "chorus": ["C", "G", "D", "Em"],
+                         "bridge": ["Am", "Em", "C", "D"]},
+    },
+    "edm": {
+        "bpm": 128, "key": "F minor", "sidechain": True,
+        "instruments": [
+            {"track": "drums", "role": "drums", "program": 0, "pan": 0.0},
+            {"track": "bass", "role": "bass", "program": 38, "pan": 0.0, "drive": 0.35},
+            {"track": "pluck", "role": "arp", "program": 81, "pan": 0.3, "delay": 0.35,
+             "automation": [{"param": "pan", "mode": "autopan", "depth": 0.5, "bars": 2}]},
+            {"track": "supersaw", "role": "chords", "program": 90, "pan": 0.0, "reverb": 0.5,
+             "automation": [{"param": "cutoff", "from": 0.2, "to": 1.0}]},
+            {"track": "lead", "role": "lead", "program": 81, "pan": 0.0, "reverb": 0.4,
+             "delay": 0.3},
+            {"track": "pad", "role": "pad", "program": 91, "pan": -0.35, "reverb": 0.8},
+        ],
+        "sections": [
+            ("intro", 8, 0.3, ["pad", "pluck"], []),
+            ("build", 8, 0.6, ["drums", "pluck", "supersaw", "pad"], ["riser"]),
+            ("drop", 16, 1.0, ["drums", "bass", "supersaw", "lead", "pluck"], ["impact", "drop"]),
+            ("breakdown", 12, 0.4, ["pad", "supersaw", "lead"], ["downlifter"]),
+            ("build 2", 8, 0.7, ["drums", "pluck", "supersaw", "pad"], ["riser"]),
+            ("drop 2", 16, 1.0, ["drums", "bass", "supersaw", "lead", "pluck"], ["impact", "drop"]),
+            ("outro", 8, 0.35, ["pad", "pluck"], []),
+        ],
+        "progressions": {"verse": ["Fm", "Db", "Ab", "Eb"], "chorus": ["Db", "Ab", "Eb", "Fm"],
+                         "bridge": ["Bbm", "Fm", "Db", "Ab"]},
+    },
+    "jazz": {
+        "bpm": 124, "key": "Bb major", "sidechain": False,
+        "instruments": [
+            {"track": "drums", "role": "drums", "program": 0, "pan": 0.0, "reverb": 0.3},
+            {"track": "bass", "role": "bass", "program": 32, "pan": -0.2},
+            {"track": "piano", "role": "chords", "program": 0, "pan": 0.25, "reverb": 0.35},
+            {"track": "sax", "role": "lead", "program": 66, "pan": 0.0, "reverb": 0.4},
+            {"track": "trumpet", "role": "counter", "program": 56, "pan": 0.3, "reverb": 0.4},
+            {"track": "vibes", "role": "arp", "program": 11, "pan": -0.35, "reverb": 0.45},
+        ],
+        "sections": [
+            ("head", 16, 0.55, ["drums", "bass", "piano", "sax"], []),
+            ("head 2", 16, 0.65, ["drums", "bass", "piano", "sax", "trumpet"], []),
+            ("solo", 16, 0.75, ["drums", "bass", "piano", "vibes"], []),
+            ("shout", 12, 0.9, ["drums", "bass", "piano", "sax", "trumpet"], ["impact"]),
+            ("out head", 16, 0.6, ["drums", "bass", "piano", "sax", "trumpet"], []),
+        ],
+        "progressions": {"verse": ["Bbmaj7", "Gm7", "Cm7", "F7"],
+                         "chorus": ["Ebmaj7", "Dm7", "Gm7", "Cm7"],
+                         "bridge": ["Dm7", "G7", "Cm7", "F7"]},
+    },
+    "hip hop": {
+        "bpm": 92, "key": "C minor", "sidechain": False,
+        "instruments": [
+            {"track": "drums", "role": "drums", "program": 0, "pan": 0.0},
+            {"track": "808", "role": "bass", "program": 38, "pan": 0.0, "drive": 0.3},
+            {"track": "keys", "role": "chords", "program": 4, "pan": -0.25, "reverb": 0.4},
+            {"track": "bells", "role": "lead", "program": 9, "pan": 0.25, "delay": 0.3,
+             "reverb": 0.4},
+            {"track": "strings", "role": "pad", "program": 49, "pan": 0.0, "reverb": 0.7},
+            {"track": "perc", "role": "perc", "program": 0, "pan": 0.35},
+        ],
+        "sections": [
+            ("intro", 8, 0.35, ["keys", "strings"], []),
+            ("verse", 16, 0.6, ["drums", "808", "keys", "strings", "perc"], ["impact"]),
+            ("hook", 16, 0.9, ["drums", "808", "keys", "bells", "strings", "perc"], []),
+            ("verse 2", 16, 0.62, ["drums", "808", "keys", "strings", "perc"], []),
+            ("hook 2", 16, 0.95, ["drums", "808", "keys", "bells", "strings", "perc"], []),
+            ("outro", 8, 0.3, ["keys", "strings"], ["downlifter"]),
+        ],
+        "progressions": {"verse": ["Cm", "Ab", "Eb", "Bb"], "chorus": ["Fm", "Cm", "Ab", "Eb"],
+                         "bridge": ["Ab", "Eb", "Bb", "Cm"]},
+    },
+    "ambient": {
+        "bpm": 70, "key": "C major", "sidechain": False,
+        "instruments": [
+            {"track": "pad", "role": "pad", "program": 88, "pan": -0.2, "reverb": 0.9,
+             "automation": [{"param": "cutoff", "from": 0.2, "to": 0.9}]},
+            {"track": "pad2", "role": "pad", "program": 95, "pan": 0.25, "reverb": 0.9},
+            {"track": "bells", "role": "arp", "program": 10, "pan": 0.35, "delay": 0.45,
+             "reverb": 0.7,
+             "automation": [{"param": "pan", "mode": "autopan", "depth": 0.6, "bars": 8}]},
+            {"track": "cello", "role": "bass", "program": 42, "pan": 0.0, "reverb": 0.75},
+            {"track": "flute", "role": "lead", "program": 73, "pan": 0.1, "reverb": 0.8,
+             "delay": 0.35},
+        ],
+        "sections": [
+            ("emerge", 12, 0.2, ["pad", "cello"], []),
+            ("drift", 16, 0.4, ["pad", "pad2", "bells", "cello"], []),
+            ("bloom", 16, 0.65, ["pad", "pad2", "bells", "cello", "flute"], ["impact"]),
+            ("recede", 12, 0.3, ["pad", "bells", "flute"], ["downlifter"]),
+            ("rest", 8, 0.15, ["pad", "cello"], []),
+        ],
+        "progressions": {"verse": ["Cmaj7", "Am7", "Fmaj7", "G"],
+                         "chorus": ["Fmaj7", "Cmaj7", "Dm7", "G"],
+                         "bridge": ["Am7", "Em7", "Fmaj7", "Cmaj7"]},
+    },
+}
+DEFAULT_GENRE = "synth-pop"
+
+
+def template_for(genre: str) -> dict:
+    g = (genre or "").strip().lower()
+    if g in GENRE_TEMPLATES:
+        return GENRE_TEMPLATES[g]
+    for name, t in GENRE_TEMPLATES.items():          # "dark cinematic trailer"
+        if name in g or g in name:
+            return t
+    for name, t in GENRE_TEMPLATES.items():
+        if any(w and w in g for w in name.split("-")):
+            return t
+    return GENRE_TEMPLATES[DEFAULT_GENRE]
+
+
+# ============================================================ score normalization
+
+WORD_LEVELS = {"none": 0.0, "silent": 0.0, "min": 0.1, "low": 0.3, "quiet": 0.3,
+               "soft": 0.35, "medium": 0.6, "mid": 0.6, "moderate": 0.6,
+               "high": 0.85, "loud": 0.9, "full": 1.0, "max": 1.0, "maximum": 1.0}
+
+
+def _clamp(v, lo, hi, default):
+    """Coerce-and-clamp. Every plan field goes through this because the planner
+    happily returns "118 bpm", "75%", "high", null, or "Pad 2 (warm)" where a
+    number belongs — and a render must never die on one bad field."""
+    if isinstance(v, str):
+        s = v.strip().lower()
+        if s in WORD_LEVELS:
+            v = WORD_LEVELS[s]
+        elif s.endswith("%"):
+            try:
+                v = float(s[:-1]) / 100.0
+            except ValueError:
+                return default
+    try:
+        n = float(str(v).strip().split()[0].rstrip("%"))
+    except (TypeError, ValueError, IndexError, AttributeError):
+        return default
+    if isinstance(lo, int) and isinstance(hi, int):
+        n = int(round(n))
+    return max(lo, min(hi, n))
+
+
+# A patch that suits each role, for when the plan's program is missing or bogus.
+# Clamping a nonsense number instead would hand a pad the Gunshot patch.
+ROLE_PROGRAM = {"drums": 0, "perc": 0, "bass": 33, "chords": 0, "pad": 89,
+                "arp": 81, "lead": 80, "counter": 73}
+GM_BY_NAME = {n.lower(): i for i, n in enumerate(GM_INSTRUMENTS)}
+# words in a track name that give away what it's for, when the role is missing
+# or unrecognized — far better than positional guessing
+NAME_ROLE_HINTS = (
+    (("drum", "kit", "beat", "percussion"), "drums"),
+    (("shaker", "tamb", "conga", "perc"), "perc"),
+    (("bass", "808", "sub"), "bass"),
+    (("pad", "string", "atmos", "choir", "swell", "organ"), "pad"),
+    (("arp", "pluck", "sequence", "seq"), "arp"),
+    (("lead", "melody", "hook", "sax", "trumpet", "flute", "vocal", "solo"), "lead"),
+    (("counter", "harmony", "answer"), "counter"),
+    (("piano", "keys", "key", "guitar", "rhythm", "chord", "stab", "comp",
+      "vibes", "bell", "harp", "synth"), "chords"),
+)
+
+
+def _resolve_program(value, role: str) -> tuple:
+    """Program number from anything a planner might send: a number, a GM patch
+    name ("Pad 2 (warm)"), or junk. Returns (program, warning)."""
+    if role in ("drums", "perc"):
+        return 0, None
+    if isinstance(value, str) and not value.strip().lstrip("-").isdigit():
+        key = value.strip().lower()
+        if key in GM_BY_NAME:
+            return GM_BY_NAME[key], None
+        for name, idx in GM_BY_NAME.items():          # "warm pad" -> "Pad 2 (warm)"
+            if key and (key in name or name in key):
+                return idx, None
+        return ROLE_PROGRAM[role], f"unknown instrument {value!r} -> " \
+                                   f"{GM_INSTRUMENTS[ROLE_PROGRAM[role]]}"
+    # out of range falls back to the role's patch rather than clamping: clamping
+    # 200 would hand a pad the Gunshot sample at the top of the GM map
+    n = _clamp(value, -9999, 9999, -1)
+    if not 0 <= n <= 127:
+        return ROLE_PROGRAM[role], (None if n == -1 else
+                                    f"program {n} is outside GM 0-127 -> "
+                                    f"{GM_INSTRUMENTS[ROLE_PROGRAM[role]]}")
+    return n, None
+
+
+def _infer_role(item: dict, name: str, index: int) -> tuple:
+    """Best-effort role. Reads the declared role first, then the track name, and
+    only then falls back to position."""
+    raw = str(item.get("role") or "").strip().lower()
+    alias = {"keys": "chords", "piano": "chords", "guitar": "chords",
+             "rhythm": "chords", "comp": "chords", "stab": "chords",
+             "harmony": "counter", "counter-melody": "counter",
+             "countermelody": "counter", "melody": "lead", "hook": "lead",
+             "solo": "lead", "percussion": "perc", "aux": "perc",
+             "kit": "drums", "drum": "drums", "beat": "drums",
+             "strings": "pad", "atmosphere": "pad", "texture": "pad"}
+    role = alias.get(raw, raw)
+    if role in ROLES:
+        return role, None
+    hay = f"{name} {raw}".lower()
+    for words, guess in NAME_ROLE_HINTS:
+        if any(w in hay for w in words):
+            return guess, (f"track {index + 1} ({name}): role {raw!r} isn't one I "
+                           f"can write — treated it as {guess}" if raw else None)
+    guess = "lead" if index == 0 else "chords"
+    return guess, (f"track {index + 1} ({name}): role {raw!r} isn't one I can "
+                   f"write — treated it as {guess}")
+
+
+def _progression_for(name: str, prog: dict) -> list:
+    n = (name or "").lower()
+    if any(k in n for k in ("chorus", "hook", "drop", "theme", "climax", "shout")):
+        return prog.get("chorus") or prog["verse"]
+    if any(k in n for k in ("bridge", "middle", "break", "solo", "breakdown", "recede")):
+        return prog.get("bridge") or prog["verse"]
+    return prog["verse"]
+
+
+def normalize_score(raw: dict) -> dict:
+    """Repair ANY plan into something renderable.
+
+    The planner is a 20B local model, so every field is treated as a
+    suggestion: unknown roles, out-of-range programs, chords that don't parse,
+    sections referencing tracks that don't exist, missing instruments — all get
+    replaced from the genre template rather than failing the render. A plan that
+    arrives empty still produces a complete song."""
+    raw = dict(raw or {})
+    genre = str(raw.get("genre") or DEFAULT_GENRE).strip() or DEFAULT_GENRE
+    tpl = template_for(genre)
+    warnings = []
+    # Falling back to the template is only worth reporting when a planner TRIED
+    # and produced something unusable. When the caller asked for the template
+    # outright, saying "no usable instrument list" reads as a failure.
+    from_template = str(raw.get("planner") or "").lower() == "template"
+
+    key = str(raw.get("key") or tpl["key"])
+    key_pc, mode = parse_key(key)
+    bpm = _clamp(raw.get("bpm"), 50, 200, tpl["bpm"])
+    tsig = _clamp(raw.get("time_signature"), 3, 4, 4)
+    seed = _clamp(raw.get("seed"), -1, 2 ** 31 - 1, -1)
+    if seed < 0:
+        seed = random.randint(1, 2 ** 31 - 1)
+
+    # ---- instruments ----
+    src = raw.get("instruments")
+    if isinstance(src, dict):        # accept {"pad": {...}} as well as a list
+        src = [{**v, "track": k} for k, v in src.items() if isinstance(v, dict)]
+    if not isinstance(src, list) or not src:
+        src = tpl["instruments"]
+        if not from_template:
+            warnings.append("no usable instrument list in the plan — used the "
+                            f"{genre} template roster")
+    insts, seen = [], set()
+    for i, item in enumerate(src[:10]):
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("track") or item.get("name") or
+                   item.get("role") or f"track {i + 1}").strip()[:24] or f"track {i + 1}"
+        role, warn = _infer_role(item, name, i)
+        if warn:
+            warnings.append(warn)
+        while name.lower() in seen:
+            name += "2"
+        seen.add(name.lower())
+        prog, warn = _resolve_program(item.get("program"), role)
+        if warn:
+            warnings.append(f"track {i + 1} ({name}): {warn}")
+        # hand-edited notes from the piano roll: [[beat, dur_beats, pitch, vel]].
+        # Present = this track replays exactly these instead of being re-composed,
+        # so an edit survives every later re-render.
+        override = item.get("notes_override")
+        clean_override = None
+        if isinstance(override, list) and override:
+            clean_override = []
+            for n in override[:20000]:
+                if not isinstance(n, (list, tuple)) or len(n) < 4:
+                    continue
+                clean_override.append([
+                    round(max(0.0, _clamp(n[0], 0.0, 100000.0, 0.0)), 4),
+                    round(max(0.02, _clamp(n[1], 0.02, 64.0, 1.0)), 4),
+                    int(_clamp(n[2], 0, 127, 60)), int(_clamp(n[3], 1, 127, 90))])
+            clean_override = clean_override or None
+
+        t = {
+            "track": name, "role": role, "program": prog,
+            "notes_override": clean_override,
+            "muted": str(item.get("muted", False)).lower() in ("true", "1", "yes"),
+            # drums/perc always play the GM percussion map on channel 10, so the
+            # program number is meaningless for them — don't label it as a patch
+            "instrument": ("GM Drum Kit" if role in ("drums", "perc")
+                           else GM_INSTRUMENTS[prog]),
+            "level": round(_clamp(item.get("level"), 0.05, 1.5, ROLE_LEVEL[role]), 3),
+            "pan": round(_clamp(item.get("pan"), -1.0, 1.0, 0.0), 3),
+            "reverb": round(_clamp(item.get("reverb"), 0.0, 1.0, 0.3), 3),
+            "delay": round(_clamp(item.get("delay"), 0.0, 1.0, 0.0), 3),
+            "drive": round(_clamp(item.get("drive"), 0.0, 1.0, 0.0), 3),
+            "tone": str(item.get("tone") or "neutral").strip().lower()[:12],
+            "automation": _norm_automation(item.get("automation")),
+        }
+        insts.append(t)
+    if not any(t["role"] == "drums" for t in insts) and tsig == 4 and \
+            "ambient" not in genre.lower():
+        insts.append({"track": "drums", "role": "drums", "program": 0,
+                      "instrument": "GM Drum Kit", "level": 1.0, "pan": 0.0,
+                      "reverb": 0.25, "delay": 0.0, "drive": 0.0,
+                      "tone": "neutral", "automation": []})
+    if not any(t["role"] == "bass" for t in insts):
+        insts.append({"track": "bass", "role": "bass", "program": 33,
+                      "instrument": GM_INSTRUMENTS[33], "level": ROLE_LEVEL["bass"],
+                      "pan": 0.0, "reverb": 0.2, "delay": 0.0, "drive": 0.15,
+                      "tone": "neutral", "automation": []})
+    want_tracks = _clamp(raw.get("target_tracks"), 1, 10, 0)
+    if want_tracks and len(insts) > want_tracks:
+        # honour the requested instrument count — the template rosters are a
+        # fixed size, so without this the UI's slider does nothing whenever the
+        # plan came from a template rather than the planner. Drop the least
+        # load-bearing parts first: a song survives losing its counter-melody,
+        # not its drums or bass.
+        keep_order = ("drums", "bass", "lead", "chords", "pad", "arp", "perc", "counter")
+        ranked = sorted(insts, key=lambda t: keep_order.index(t["role"])
+                        if t["role"] in keep_order else 99)
+        kept = {id(t) for t in ranked[:want_tracks]}
+        insts = [t for t in insts if id(t) in kept]
+    names = [t["track"] for t in insts]
+
+    # ---- sections ----
+    prog_bank = {k: list(v) for k, v in tpl["progressions"].items()}
+    src_sec = raw.get("sections")
+    if not isinstance(src_sec, list) or not src_sec:
+        src_sec = [{"name": n, "bars": b, "energy": e, "tracks": tracks, "fx": fx}
+                   for n, b, e, tracks, fx in tpl["sections"]]
+        if not from_template:
+            warnings.append(f"no usable section list — used the {genre} "
+                            f"template structure")
+    sections = []
+    for item in src_sec[:16]:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or f"section {len(sections) + 1}").strip()[:28]
+        bars = _clamp(item.get("bars"), 2, 32, 8)
+        energy = round(_clamp(item.get("energy"), 0.0, 1.0, 0.6), 3)
+        tracks = [n for n in (item.get("tracks") or []) if n in names]
+        if not tracks:
+            # fall back to the template's own instrumentation for a section of
+            # this energy: everything but the melody at low energy, all in at high
+            tracks = [t["track"] for t in insts
+                      if energy > 0.7 or t["role"] not in ("lead", "counter")]
+            if energy < 0.35:
+                keep = [t["track"] for t in insts if t["role"] in ("pad", "chords", "arp")]
+                tracks = keep or tracks
+        chords = []
+        for sym in (item.get("chord_symbols") or item.get("chords")
+                    or _progression_for(name, prog_bank)):
+            # accept a normalized score as input as well as a raw plan: the
+            # editor round-trips this module's own output, where chords are dicts
+            # rather than symbol strings. Without this a saved score reparsed to
+            # "{'symbol': ...}", failed, and silently fell back to a diatonic
+            # progression — an edit would quietly rewrite the harmony.
+            if isinstance(sym, dict):
+                sym = sym.get("symbol") or ""
+            c = parse_chord(str(sym), key_pc, mode)
+            if c:
+                chords.append(c)
+        if not chords:
+            dia = diatonic_chords(key_pc, mode)
+            chords = [dia[0], dia[5], dia[3], dia[4]]
+            warnings.append(f"'{name}': no parseable chords — used a diatonic progression")
+        fx = [f for f in (item.get("fx") or [])
+              if str(f).strip().lower() in ("riser", "impact", "downlifter", "drop",
+                                            "filter_sweep")]
+        sections.append({"name": name, "bars": bars, "energy": energy,
+                         "tracks": tracks, "fx": [str(f).lower() for f in fx],
+                         "chords": chords,
+                         "chord_symbols": [c["symbol"] for c in chords]})
+    if not sections:
+        sections = [{"name": "main", "bars": 16, "energy": 0.7,
+                     "tracks": names, "fx": [], "chords": diatonic_chords(key_pc, mode)[:4],
+                     "chord_symbols": []}]
+
+    # Trust the chords over the declared key when they disagree — see
+    # detect_key_from_chords. Only overrides on a clear win, so a progression
+    # with a couple of borrowed chords doesn't get its key relabelled.
+    declared_fit = key_fit(sections, key_pc, mode)
+    det_pc, det_mode, det_fit, _w = detect_key_from_chords(sections)
+    if det_fit > declared_fit + 0.12 and (det_pc, det_mode) != (key_pc, mode):
+        warnings.append(
+            f"the plan said {PC_NAME[key_pc]} {mode} but the progression is in "
+            f"{PC_NAME[det_pc]} {det_mode} ({det_fit:.0%} of chord tones fit vs "
+            f"{declared_fit:.0%}) — used the chords' key so the melody agrees "
+            f"with the harmony")
+        key_pc, mode = det_pc, det_mode
+
+    _fit_duration(sections, _clamp(raw.get("target_seconds"), 0, 900, 0),
+                  tsig, bpm, warnings)
+    total_bars = sum(s["bars"] for s in sections)
+    return {
+        "title": str(raw.get("title") or "Untitled").strip()[:80] or "Untitled",
+        "genre": genre, "brief": str(raw.get("brief") or "")[:600],
+        "notes": str(raw.get("notes") or "")[:1200],
+        "bpm": bpm, "key": f"{PC_NAME[key_pc]} {mode}", "key_pc": key_pc, "mode": mode,
+        "time_signature": tsig, "seed": seed,
+        "sidechain": str(raw.get("sidechain", tpl["sidechain"])).lower()
+                     not in ("false", "none", "0", "no", ""),
+        "swing": round(_clamp(raw.get("swing"), 0.0, 0.6, 0.0), 3),
+        # performance realism, on by default; exposed so a render can be A/B'd
+        # against the raw quantized version
+        "humanize": str(raw.get("humanize", True)).lower()
+                    not in ("false", "none", "0", "no"),
+        "instruments": insts, "sections": sections,
+        "total_bars": total_bars,
+        "duration": round(total_bars * tsig * 60.0 / bpm, 1),
+        "planner": str(raw.get("planner") or "template")[:60],
+        "warnings": warnings,
+    }
+
+
+def _fit_duration(sections: list, target_seconds: float, tsig: int, bpm: int,
+                  warnings: list):
+    """Scale section lengths in place so the song lands near the requested
+    length.
+
+    Runs here rather than on the incoming plan because the sections may have come
+    from a genre template (fixed length) instead of the planner — fitting before
+    that substitution silently did nothing, and a 1-minute request rendered 3:30.
+    Planners are also just bad at this arithmetic, and it's the one part of a plan
+    that's pure maths rather than taste."""
+    if not target_seconds or not sections:
+        return
+    bar_seconds = tsig * 60.0 / bpm
+    target_bars = max(4.0, target_seconds / bar_seconds)
+    current = float(sum(s["bars"] for s in sections))
+    f = target_bars / current
+    if 0.88 <= f <= 1.12:
+        return
+    for s in sections:
+        # keep even bar counts so phrases stay square
+        s["bars"] = int(max(2, min(32, round(s["bars"] * f / 2) * 2)))
+    got = sum(s["bars"] for s in sections) * bar_seconds
+    if abs(got - target_seconds) > max(20.0, 0.25 * target_seconds):
+        warnings.append(
+            f"asked for {int(target_seconds // 60)}:{int(target_seconds % 60):02d} "
+            f"but the structure fits {int(got // 60)}:{int(got % 60):02d} — "
+            f"sections are capped at 32 bars, so add or remove sections to get closer")
+
+
+AUTO_PARAMS = ("cutoff", "volume", "pan", "reverb", "delay")
+
+
+def _norm_automation(src) -> list:
+    out = []
+    if not isinstance(src, list):
+        return out
+    for item in src[:4]:
+        if not isinstance(item, dict):
+            continue
+        param = str(item.get("param") or "").strip().lower()
+        if param not in AUTO_PARAMS:
+            continue
+        mode = str(item.get("mode") or "ramp").strip().lower()
+        if mode not in ("ramp", "autopan", "tremolo"):
+            mode = "ramp"
+        out.append({
+            "param": param, "mode": mode,
+            "from": round(_clamp(item.get("from"), -1.0, 2.0, 0.0), 3),
+            "to": round(_clamp(item.get("to"), -1.0, 2.0, 1.0), 3),
+            "depth": round(_clamp(item.get("depth"), 0.0, 1.0, 0.4), 3),
+            "bars": round(_clamp(item.get("bars"), 0.25, 32.0, 4.0), 3),
+            "section": str(item.get("section") or "").strip()[:28],
+        })
+    return out
+
+
+# ============================================================ arrangement -> notes
+
+# One bar of 4/4 as 16 sixteenths. 'x' = accent, 'o' = normal, '-' = ghost.
+DRUM_PATTERNS = {
+    "pop": {"kick": "x..o..x...o.....", "snare": "....x.......x...",
+            "hat": "..o...o...o...o.", "openhat": "............o...",
+            "shaker": "o.o.o.o.o.o.o.o."},
+    "rock": {"kick": "x...x..x..x.....", "snare": "....x.......x..o",
+             "hat": "o.o.o.o.o.o.o.o.", "ride": "................"},
+    "edm": {"kick": "x...x...x...x...", "snare": "....x.......x...",
+            "hat": "..x...x...x...x.", "openhat": "..o...o...o...o.",
+            "clap": "....x.......x..."},
+    "house": {"kick": "x...x...x...x...", "clap": "....x.......x...",
+              "hat": "..o.o.o.o.o.o.o.", "openhat": "..x...x...x...x."},
+    "hip hop": {"kick": "x.....o.x.......", "snare": "....x.......x...",
+                "hat": "o.o.o.o.o.o.o.o-", "openhat": "..........o....."},
+    "trap": {"kick": "x.....x...x.....", "snare": "....x.......x...",
+             "hat": "oooooooooooooooo", "openhat": "..........o....."},
+    "funk": {"kick": "x..x..o.x...o...", "snare": "....x..o....x..o",
+             "hat": "o-o-o-o-o-o-o-o-", "openhat": "......o........."},
+    "jazz": {"kick": "x.......x.......", "snare": "....-.......-..o",
+             "ride": "o..o.oo..o.oo..o", "pedalhat": "....o.......o..."},
+    "latin": {"kick": "x.....x.x.....x.", "snare": "..o...o...o...o.",
+              "hat": "o.o.o.o.o.o.o.o.", "conga_hi": "..o.o...o.o.o..o",
+              "claves": "..x..x..x...x..."},
+    "ballad": {"kick": "x.......x.......", "snare": "....x.......x...",
+               "hat": "....o.......o..."},
+    "lo-fi": {"kick": "x.....o.x.......", "snare": "....x.......x..-",
+              "hat": "o..o.o..o..o.o..", "shaker": "..o...o...o...o."},
+    "metal": {"kick": "x.x.x.x.x.x.x.x.", "snare": "....x.......x...",
+              "hat": "o...o...o...o...", "crash2": "................"},
+    "cinematic": {"kick": "x.......x.......", "tom_lo": "x.......x.......",
+                  "tom_mid": "........x...x...", "crash": "................"},
+    "ambient": {"kick": "x...............", "shaker": "....o.......o..."},
+    # 3/4 patterns are 12 steps, not 16 — a 16-step pattern read modulo 12 puts
+    # the backbeat somewhere different in every bar
+    "waltz": {"kick": "x...........", "snare": "....x...x...",
+              "hat": "o...o...o...", "shaker": "..o...o...o."},
+}
+GENRE_KIT = {"synth-pop": "pop", "edm": "edm", "rock": "rock", "jazz": "jazz",
+             "hip hop": "hip hop", "lo-fi": "lo-fi", "cinematic": "cinematic",
+             "ambient": "ambient"}
+
+
+def _kit_for(genre: str, tsig: int) -> dict:
+    if tsig == 3:
+        return DRUM_PATTERNS["waltz"]
+    g = (genre or "").lower()
+    for key in sorted(DRUM_PATTERNS, key=len, reverse=True):
+        if key in g:
+            return DRUM_PATTERNS[key]
+    return DRUM_PATTERNS[GENRE_KIT.get(g, "pop")]
+
+
+class Timeline:
+    """Bar-by-bar map of the whole song: which section, chord, energy and
+    absolute beat each bar sits at. Every part writer reads this, so the parts
+    agree on harmony and dynamics without talking to each other."""
+
+    def __init__(self, score: dict):
+        self.bpb = score["time_signature"]
+        self.bpm = score["bpm"]
+        self.spb = 60.0 / self.bpm                       # seconds per beat
+        self.bar_seconds = self.bpb * self.spb
+        self.bars = []
+        beat = 0.0
+        for si, sec in enumerate(score["sections"]):
+            chords, n = sec["chords"], sec["bars"]
+            per_bar = 2 if len(chords) >= 2 * n else 1
+            for b in range(n):
+                if per_bar == 2:
+                    cs = [(0.0, chords[(2 * b) % len(chords)]),
+                          (self.bpb / 2.0, chords[(2 * b + 1) % len(chords)])]
+                else:
+                    cs = [(0.0, chords[b % len(chords)])]
+                self.bars.append({
+                    "abs": len(self.bars), "section": si, "name": sec["name"],
+                    "in_section": b, "of_section": n, "energy": sec["energy"],
+                    "tracks": sec["tracks"], "fx": sec["fx"],
+                    "chords": cs, "start_beat": beat,
+                    "first": b == 0, "last": b == n - 1,
+                })
+                beat += self.bpb
+        self.total_beats = beat
+        self.duration = beat * self.spb
+
+    def chord_at(self, bar, beat_in_bar):
+        cur = bar["chords"][0][1]
+        for off, c in bar["chords"]:
+            if beat_in_bar + 1e-6 >= off:
+                cur = c
+        return cur
+
+    def section_bounds(self, si: int) -> tuple:
+        bars = [b for b in self.bars if b["section"] == si]
+        return (bars[0]["start_beat"] * self.spb,
+                (bars[-1]["start_beat"] + self.bpb) * self.spb)
+
+
+def _hit_vel(mark: str, base: int, energy: float, rng) -> int:
+    scale = {"x": 1.0, "o": 0.82, "-": 0.5}.get(mark, 0.0)
+    v = base * scale * (0.62 + 0.45 * energy) + rng.uniform(-4, 4)
+    return int(max(1, min(127, v)))
+
+
+def write_drums(tl: Timeline, score: dict, track: dict, rng) -> list:
+    """Kit part: the genre pattern, thinned at low energy, with 16th hats at
+    high energy, an 8-bar fill and a crash on every section downbeat."""
+    kit = _kit_for(score["genre"], tl.bpb)
+    steps = 4 * tl.bpb
+    notes = []
+    for bar in tl.bars:
+        if track["track"] not in bar["tracks"]:
+            continue
+        e = bar["energy"]
+        for piece, pattern in kit.items():
+            note = DRUM.get(piece)
+            if note is None:
+                continue
+            base = {"kick": 108, "snare": 104, "clap": 96, "hat": 76,
+                    "openhat": 82, "ride": 74, "shaker": 62}.get(piece, 88)
+            for s in range(steps):
+                mark = pattern[s % len(pattern)]
+                if mark == ".":
+                    continue
+                # thin the kit out when the section is quiet, drive it when loud
+                if e < 0.45 and piece in ("openhat", "shaker", "ride") and s % 4:
+                    continue
+                if e < 0.3 and piece == "hat" and s % 4:
+                    continue
+                if mark == "-" and e < 0.6:
+                    continue
+                beat = bar["start_beat"] + s / 4.0
+                notes.append((beat, 0.22, note, _hit_vel(mark, base, e, rng)))
+            # extra 16th hats up top when the section is really going
+            if piece == "hat" and e > 0.8:
+                for s in range(1, steps, 2):
+                    if pattern[s % len(pattern)] == ".":
+                        notes.append((bar["start_beat"] + s / 4.0, 0.15, DRUM["hat"],
+                                      _hit_vel("-", 74, e, rng)))
+        if bar["first"] and bar["energy"] > 0.45:
+            notes.append((bar["start_beat"], 1.5, DRUM["crash"],
+                          _hit_vel("x", 110, bar["energy"], rng)))
+        # fill into the next 8-bar phrase (and into the next section)
+        phrase_end = (bar["in_section"] % 8 == 7) or bar["last"]
+        if phrase_end and bar["energy"] > 0.5 and tl.bpb == 4:
+            for k, note in enumerate(("tom_top", "tom_hi", "tom_mid", "tom_lo")):
+                for j in range(2):
+                    beat = bar["start_beat"] + 2.0 + k * 0.5 + j * 0.25
+                    notes.append((beat, 0.2, DRUM[note],
+                                  _hit_vel("o", 96 + 4 * k, bar["energy"], rng)))
+    return notes
+
+
+def write_perc(tl: Timeline, score: dict, track: dict, rng) -> list:
+    notes = []
+    for bar in tl.bars:
+        if track["track"] not in bar["tracks"]:
+            continue
+        e = bar["energy"]
+        for s in range(0, 4 * tl.bpb, 2):
+            notes.append((bar["start_beat"] + s / 4.0, 0.12, DRUM["shaker"],
+                          _hit_vel("o" if s % 4 else "x", 58, e, rng)))
+        if e > 0.6:
+            for s in (4, 12):
+                if s < 4 * tl.bpb:
+                    notes.append((bar["start_beat"] + s / 4.0, 0.2, DRUM["tamb"],
+                                  _hit_vel("o", 70, e, rng)))
+    return notes
+
+
+BASS_PATTERNS = {
+    "sustain": [(0.0, 4.0)],
+    "half": [(0.0, 2.0), (2.0, 2.0)],
+    "eighths": [(i * 0.5, 0.45) for i in range(8)],
+    "pump": [(i * 0.25, 0.22) for i in range(16)],
+    "syncopated": [(0.0, 0.5), (0.75, 0.25), (1.5, 0.5), (2.5, 0.5), (3.0, 0.25),
+                   (3.5, 0.5)],
+    "walking": [(i * 1.0, 0.9) for i in range(4)],
+    "root_five": [(0.0, 1.5), (1.5, 0.5), (2.0, 1.5), (3.5, 0.5)],
+}
+
+
+def _bass_style(genre: str, energy: float) -> str:
+    g = (genre or "").lower()
+    if "jazz" in g:
+        return "walking"
+    if "ambient" in g or "cinematic" in g:
+        return "sustain" if energy < 0.6 else "half"
+    if "edm" in g or "house" in g:
+        return "pump" if energy > 0.75 else "eighths"
+    if "funk" in g or "hip hop" in g or "lo-fi" in g:
+        return "syncopated"
+    if energy < 0.4:
+        return "half"
+    return "eighths" if energy > 0.6 else "root_five"
+
+
+def write_bass(tl: Timeline, score: dict, track: dict, rng) -> list:
+    lo, hi, _ = ROLE_REGISTER["bass"]
+    scale = scale_pitches(score["key_pc"], score["mode"])
+    notes, prev = [], None
+    for bar in tl.bars:
+        if track["track"] not in bar["tracks"]:
+            continue
+        style = _bass_style(score["genre"], bar["energy"])
+        pattern = BASS_PATTERNS[style]
+        for off, dur in pattern:
+            if off >= tl.bpb:
+                continue
+            chord = tl.chord_at(bar, off)
+            root = register_base(chord["root"], lo)
+            pitch = root
+            if style == "walking":
+                # approach the next chord's root by step — what makes a walking
+                # line walk instead of just restating the root four times
+                step = int(off)
+                nxt = tl.chord_at(bar, min(off + 1.0, tl.bpb - 0.01))
+                if step == 3 and nxt["root"] != chord["root"]:
+                    target = register_base(nxt["root"], lo)
+                    pitch = target - 1 if target > root else target + 1
+                elif step in (1, 2):
+                    pitch = root + [0, 7, 3 if 3 in chord["ivs"] else 4][step % 3]
+            elif style in ("root_five", "half"):
+                pitch = root + (7 if off >= tl.bpb / 2 else 0)
+            elif style in ("eighths", "pump") and bar["energy"] > 0.7:
+                # octave pushes on the back half of the bar
+                pitch = root + (12 if (off * 4) % 4 == 2 else 0)
+            elif style == "syncopated" and off > 2.0:
+                pitch = root + (12 if rng.random() < 0.35 else 0)
+            pitch = max(lo, min(hi + 12, pitch))
+            vel = int(76 + 34 * bar["energy"] + rng.uniform(-5, 5))
+            notes.append((bar["start_beat"] + off, dur * 0.94,
+                          pitch, max(30, min(120, vel))))
+            prev = pitch
+    return notes
+
+
+CHORD_RHYTHMS = {
+    "sustain": [(0.0, 4.0)],
+    "half": [(0.0, 1.9), (2.0, 1.9)],
+    "quarters": [(i * 1.0, 0.9) for i in range(4)],
+    "eighths": [(i * 0.5, 0.42) for i in range(8)],
+    "offbeat": [(0.5, 0.45), (1.5, 0.45), (2.5, 0.45), (3.5, 0.45)],
+    "charleston": [(0.0, 0.9), (1.75, 0.7), (2.5, 0.4)],
+    "piano_comp": [(0.0, 1.4), (1.5, 0.4), (2.0, 1.4), (3.5, 0.4)],
+}
+
+
+def _chord_rhythm(genre: str, energy: float, rng) -> str:
+    g = (genre or "").lower()
+    if "jazz" in g:
+        return "charleston"
+    if "reggae" in g or "funk" in g:
+        return "offbeat"
+    if "rock" in g or "metal" in g:
+        return "eighths" if energy > 0.7 else "quarters"
+    if "edm" in g or "house" in g:
+        return "offbeat" if energy > 0.7 else "sustain"
+    if "lo-fi" in g or "hip hop" in g:
+        return "piano_comp"
+    if energy < 0.4:
+        return "sustain"
+    return "quarters" if energy < 0.75 else "eighths"
+
+
+def write_chords(tl: Timeline, score: dict, track: dict, rng) -> list:
+    lo, hi, _ = ROLE_REGISTER["chords"]
+    notes, prev = [], None
+    for bar in tl.bars:
+        if track["track"] not in bar["tracks"]:
+            continue
+        rhythm = CHORD_RHYTHMS[_chord_rhythm(score["genre"], bar["energy"], rng)]
+        for off, dur in rhythm:
+            if off >= tl.bpb:
+                continue
+            chord = tl.chord_at(bar, off)
+            voicing = chord_pitches(chord, lo, hi, size=4, prev=prev)
+            prev = voicing or prev
+            vel = int(58 + 40 * bar["energy"] + rng.uniform(-4, 4))
+            for k, p in enumerate(voicing):
+                # voices of a chord start together here on purpose — the strum /
+                # roll is articulated later by spread_chords, which needs to be
+                # able to SEE the chord. Jittering each voice here instead made
+                # every note its own group, so no chord was ever spread.
+                notes.append((bar["start_beat"] + off,
+                              min(dur, tl.bpb - off) * 0.95, p,
+                              max(24, min(115, vel - 3 * k))))
+    return notes
+
+
+def write_pad(tl: Timeline, score: dict, track: dict, rng) -> list:
+    lo, hi, _ = ROLE_REGISTER["pad"]
+    notes, prev = [], None
+    for bar in tl.bars:
+        if track["track"] not in bar["tracks"]:
+            continue
+        for off, chord in bar["chords"]:
+            span = tl.bpb - off if len(bar["chords"]) == 1 else tl.bpb / 2.0
+            voicing = chord_pitches(chord, lo, hi, size=4, prev=prev)
+            prev = voicing or prev
+            vel = int(40 + 30 * bar["energy"])
+            for k, p in enumerate(voicing):
+                notes.append((bar["start_beat"] + off, span * 1.02, p,
+                              max(18, min(90, vel - 2 * k))))
+    return notes
+
+
+ARP_SHAPES = {"up": [0, 1, 2, 3], "down": [3, 2, 1, 0], "updown": [0, 1, 2, 3, 2, 1],
+              "wide": [0, 2, 1, 3], "trance": [0, 1, 2, 1, 3, 2, 1, 0]}
+
+
+def write_arp(tl: Timeline, score: dict, track: dict, rng) -> list:
+    lo, hi, _ = ROLE_REGISTER["arp"]
+    shape = ARP_SHAPES[rng.choice(list(ARP_SHAPES))]
+    notes = []
+    for bar in tl.bars:
+        if track["track"] not in bar["tracks"]:
+            continue
+        rate = 0.25 if bar["energy"] > 0.55 else 0.5      # 16ths vs 8ths
+        n_steps = int(tl.bpb / rate)
+        for s in range(n_steps):
+            off = s * rate
+            chord = tl.chord_at(bar, off)
+            tones = chord_pitches(chord, lo, hi, size=4)
+            if not tones:
+                continue
+            idx = shape[s % len(shape)]
+            pitch = tones[idx % len(tones)] + (12 if idx >= len(tones) else 0)
+            vel = int(52 + 34 * bar["energy"] + (8 if s % 4 == 0 else 0) + rng.uniform(-4, 4))
+            notes.append((bar["start_beat"] + off, rate * 0.92,
+                          min(hi + 12, pitch), max(24, min(112, vel))))
+    return notes
+
+
+def make_motif(rng, bars: int, tsig: int, density: float, span: int) -> list:
+    """A reusable melodic idea as (beat_offset, duration, scale_degree).
+
+    Rhythm comes from a small bank of singable cells rather than random onsets —
+    random rhythm is the fastest way to make a generated melody sound like an
+    exercise. Contour is a seeded walk that lands on a stable degree so the
+    phrase resolves."""
+    cells = [[(0.0, 1.0), (1.0, 0.5), (1.5, 0.5), (2.0, 2.0)],
+             [(0.0, 0.5), (0.5, 0.5), (1.0, 1.0), (2.0, 1.0), (3.0, 1.0)],
+             [(0.0, 1.5), (1.5, 0.5), (2.0, 1.0), (3.0, 1.0)],
+             [(0.0, 2.0), (2.0, 1.0), (3.0, 1.0)],
+             [(0.0, 0.75), (0.75, 0.75), (1.5, 0.5), (2.0, 1.5)],
+             [(0.0, 1.0), (1.5, 0.5), (2.0, 0.5), (2.5, 0.5), (3.0, 1.0)]]
+    motif, degree = [], rng.choice([0, 2, 4])
+    for b in range(bars):
+        cell = cells[rng.randrange(len(cells))]
+        if density < 0.5:                    # thin the cell out for quiet parts
+            cell = [c for i, c in enumerate(cell) if i % 2 == 0] or cell[:1]
+        for off, dur in cell:
+            if off >= tsig:
+                continue
+            motif.append((b * tsig + off, dur, degree))
+            # mostly steps, occasional leap, kept inside the register span
+            move = rng.choice([-2, -1, -1, 1, 1, 2, 3, -3]) if rng.random() < 0.85 \
+                else rng.choice([-4, 4, 5])
+            degree = max(-2, min(span, degree + move))
+    if motif:                                # resolve the phrase
+        last = motif[-1]
+        stable = min((0, 2, 4, 7), key=lambda d: abs(d - last[2]))
+        motif[-1] = (last[0], max(last[1], 1.5), stable)
+    return motif
+
+
+def _motif_key(name: str) -> str:
+    n = (name or "").lower()
+    if any(k in n for k in ("chorus", "hook", "drop", "theme", "climax", "shout", "bloom")):
+        return "chorus"
+    if any(k in n for k in ("bridge", "middle", "solo", "break")):
+        return "bridge"
+    return "verse"
+
+
+def write_lead(tl: Timeline, score: dict, track: dict, rng, offset: int = 0) -> list:
+    """The tune. One motif per section TYPE, so the chorus hook recurs and the
+    verses share an identity — then chord-tone snapping on strong beats keeps it
+    consonant as the harmony moves underneath."""
+    role = track["role"]
+    lo, hi, center = ROLE_REGISTER[role]
+    key_pc, mode = score["key_pc"], score["mode"]
+    base = register_base(key_pc, lo + 2)
+    span = 9 if role == "lead" else 7
+    motifs = {k: make_motif(rng, 2, tl.bpb, 0.8 if k == "chorus" else 0.6, span)
+              for k in ("verse", "chorus", "bridge")}
+    notes = []
+    for si, sec in enumerate(score["sections"]):
+        bars = [b for b in tl.bars if b["section"] == si]
+        if not bars or track["track"] not in bars[0]["tracks"]:
+            continue
+        motif = motifs[_motif_key(sec["name"])]
+        lift = 12 if (sec["energy"] > 0.85 and role == "lead") else 0
+        # phrase the section in 4-bar groups: motif, motif, motif, variation
+        for grp in range(0, len(bars), 4):
+            chunk = bars[grp:grp + 4]
+            for rep in range(0, len(chunk), 2):
+                pair = chunk[rep:rep + 2]
+                if not pair:
+                    continue
+                vary = (grp + rep) // 2 % 2 == 1
+                for m_off, m_dur, degree in motif:
+                    bar_i = int(m_off // tl.bpb)
+                    if bar_i >= len(pair):
+                        continue
+                    bar = pair[bar_i]
+                    beat_in_bar = m_off % tl.bpb
+                    d = degree + (1 if vary and rng.random() < 0.4 else 0) + offset
+                    pitch = degree_pitch(d, key_pc, mode, base) + lift
+                    chord = tl.chord_at(bar, beat_in_bar)
+                    if beat_in_bar % 2 < 0.01:           # strong beat -> chord tone
+                        pitch = nearest_chord_tone(pitch, chord)
+                    pitch = max(lo, min(hi, pitch))
+                    vel = int(64 + 40 * bar["energy"] +
+                              (6 if beat_in_bar < 0.01 else 0) + rng.uniform(-4, 4))
+                    # no jitter here either: humanize_timing owns timing feel, and
+                    # its correlated drift reads as a player where independent
+                    # per-note noise reads as unsteadiness
+                    notes.append((bar["start_beat"] + beat_in_bar,
+                                  m_dur * 0.9, pitch, max(30, min(120, vel))))
+    return notes
+
+
+def write_counter(tl: Timeline, score: dict, track: dict, rng) -> list:
+    """A third below the lead's idea, one bar later — lands in the lead's gaps
+    rather than fighting it for the same beats."""
+    notes = write_lead(tl, score, track, rng, offset=-2)
+    shift = tl.bpb
+    out = []
+    for beat, dur, pitch, vel in notes:
+        if beat + shift < tl.total_beats:
+            out.append((beat + shift, dur, pitch, int(vel * 0.82)))
+    return out
+
+
+WRITERS = {"drums": write_drums, "perc": write_perc, "bass": write_bass,
+           "chords": write_chords, "pad": write_pad, "arp": write_arp,
+           "lead": write_lead, "counter": write_counter}
+
+
+# ============================================================ performance realism
+#
+# The single biggest reason a rendered arrangement "sounds like MIDI" is not the
+# samples — it is that nothing performs. Every sustained note is a flat block,
+# every kick is the identical sample at the identical velocity, all voices of a
+# chord land on the same millisecond, and timing error is white noise. These
+# passes run over the finished parts, so the writers above stay about music and
+# this stays about performance.
+
+# Sustained roles get a within-note expression curve; struck/plucked ones don't
+# (a piano note's loudness is decided at the hammer, not after it).
+SUSTAINED_ROLES = ("pad", "lead", "counter")
+# GM patches that hold and swell regardless of role: strings, brass, winds, organ,
+# choir and the synth pads.
+SUSTAINED_PROGRAMS = set(range(40, 55)) | set(range(56, 80)) | set(range(16, 21)) \
+    | set(range(88, 96)) | {52, 53, 54}
+
+
+def is_sustained(track: dict) -> bool:
+    return track["role"] in SUSTAINED_ROLES or track["program"] in SUSTAINED_PROGRAMS
+
+
+def expression_curve(notes: list, track: dict, tl: Timeline, rng) -> list:
+    """CC11 points shaping loudness WITHIN each note — verified to modulate
+    FluidR3 (a swelled note renders 0.05 -> 0.13 where a flat one sits at 0.17).
+
+    CC11 is per-channel, and each track renders as its own MIDI file, so for a
+    polyphonic pad the curve moves the whole chord together. That is still much
+    closer to a played part than the dead-flat sustain it replaces.
+
+    Returns [(beat, controller, value)]."""
+    if not notes:
+        return []
+    # group notes that start together — one curve per chord, not per voice
+    events, groups = [], {}
+    for beat, dur, pitch, vel in notes:
+        groups.setdefault(round(beat, 3), []).append((dur, vel))
+    keys = sorted(groups)
+    for gi, start in enumerate(keys):
+        dur = max(d for d, _v in groups[start])
+        vel = max(v for _d, v in groups[start])
+        nxt = keys[gi + 1] if gi + 1 < len(keys) else start + dur
+        span = max(0.12, min(dur, nxt - start))
+        # a played swell: soft entry, growth into the note's body, slight decay
+        peak = 0.72 + 0.28 * (vel / 127.0) + rng.uniform(-0.06, 0.06)
+        entry = 0.34 + 0.3 * (vel / 127.0) + rng.uniform(-0.05, 0.05)
+        shape = [(0.0, entry), (0.35, peak), (0.72, peak * 0.94),
+                 (1.0, peak * 0.82)]
+        steps = max(3, min(14, int(span * 6)))
+        for k in range(steps + 1):
+            f = k / steps
+            # piecewise-linear through the shape points
+            val = shape[-1][1]
+            for (f0, v0), (f1, v1) in zip(shape, shape[1:]):
+                if f0 <= f <= f1:
+                    val = v0 + (v1 - v0) * ((f - f0) / max(f1 - f0, 1e-6))
+                    break
+            events.append((start + f * span, 11, int(max(8, min(127, val * 127)))))
+    return events
+
+
+# GM gives several usable takes of each core drum voice. Rotating them is what
+# stops a hat pattern sounding like one sample retriggered 16 times a bar.
+DRUM_ALTS = {
+    DRUM["kick"]: (DRUM["kick"], DRUM["kick"], DRUM["kick2"]),
+    DRUM["snare"]: (DRUM["snare"], DRUM["snare"], DRUM["snare2"]),
+    DRUM["hat"]: (DRUM["hat"], DRUM["hat"], DRUM["hat"], DRUM["pedalhat"]),
+}
+
+
+def humanize_drums(notes: list, tl: Timeline, rng) -> list:
+    """Round-robin the repeated voices and vary velocity within each one.
+
+    Also nudges the backbeat a few ms late — snares landing exactly on the grid
+    is the most recognisable drum-machine tell there is."""
+    out, counts = [], {}
+    for beat, dur, pitch, vel in notes:
+        alts = DRUM_ALTS.get(pitch)
+        if alts:
+            n = counts.get(pitch, 0)
+            counts[pitch] = n + 1
+            pitch = alts[n % len(alts)]
+        if pitch in (DRUM["snare"], DRUM["snare2"]):
+            beat += rng.uniform(0.004, 0.014) / tl.spb      # 4-14 ms, laid back
+        # velocity spread WITHIN a voice, so repeated hits aren't identical
+        vel = int(max(1, min(127, vel * rng.uniform(0.88, 1.06))))
+        out.append((beat, dur, pitch, vel))
+    return out
+
+
+# Per-role feel: where an instrument habitually sits against the click. A bass
+# slightly ahead and a pad slightly behind is most of what "a band" sounds like.
+ROLE_PUSH = {"drums": 0.0, "perc": 0.004, "bass": -0.006, "chords": 0.004,
+             "pad": 0.014, "arp": 0.0, "lead": 0.006, "counter": 0.010}
+
+
+def humanize_timing(notes: list, track: dict, tl: Timeline, rng) -> list:
+    """Correlated timing drift instead of per-note white noise.
+
+    A player's timing wanders slowly and then corrects; independent random
+    offsets per note just sound unsteady. A slow random walk (bounded, gently
+    pulled back to zero) reads as human where jitter reads as broken."""
+    if not notes:
+        return notes
+    # everything here is defined in SECONDS and converted, because a player's
+    # timing error doesn't shrink when the tempo rises — expressing it in beats
+    # would make fast songs sloppy and slow ones stiff
+    push = ROLE_PUSH.get(track["role"], 0.0) / tl.spb
+    sigma, cap = 0.005 / tl.spb, 0.016 / tl.spb            # 5 ms step, 16 ms cap
+    drift, out = 0.0, []
+    for beat, dur, pitch, vel in sorted(notes, key=lambda n: n[0]):
+        drift = drift * 0.82 + rng.gauss(0.0, sigma)
+        drift = max(-cap, min(cap, drift))
+        out.append((max(0.0, beat + push + drift), dur, pitch, vel))
+    return out
+
+
+def spread_chords(notes: list, track: dict, tl: Timeline, rng) -> list:
+    """Offset the voices of a chord so it is played, not stamped.
+
+    Guitars strum low-to-high over ~28ms; pianos roll ~10ms; strings and pads
+    enter raggedly because the players don't breathe together. Same operation,
+    three different spreads — in seconds, so a strum takes the same real time
+    whatever the tempo."""
+    guitar = 24 <= track["program"] <= 31
+    if track["role"] not in ("chords", "pad") and not guitar:
+        return notes
+    seconds = 0.028 if guitar else (0.010 if track["role"] == "chords" else 0.040)
+    spread = seconds / tl.spb
+    groups = {}
+    for n in notes:
+        groups.setdefault(round(n[0], 3), []).append(n)
+    out = []
+    for start, grp in groups.items():
+        if len(grp) < 2:
+            out += grp
+            continue
+        # strums run bottom-up; ensemble entries are simply uneven
+        order = sorted(grp, key=lambda n: n[2]) if guitar else \
+            sorted(grp, key=lambda n: rng.random())
+        for k, (beat, dur, pitch, vel) in enumerate(order):
+            off = spread * (k / max(len(order) - 1, 1))
+            if not guitar and track["role"] == "pad":
+                off = rng.uniform(0.0, spread)
+            # the later a voice enters, the softer it speaks
+            out.append((beat + off, max(0.05, dur - off), pitch,
+                        int(max(1, min(127, vel * (1.0 - 0.06 * k))))))
+    return out
+
+
+def shape_lengths(notes: list, track: dict, rng) -> list:
+    """Note lengths a player would use: melodic lines overlap into the next note
+    (legato), rhythmic parts breathe (staccato). Uniform durations are another
+    reason a part reads as data rather than playing."""
+    role = track["role"]
+    if role in ("drums", "perc"):
+        return notes
+    legato = role in ("lead", "counter", "pad")
+    out = []
+    for beat, dur, pitch, vel in notes:
+        if legato:
+            dur *= rng.uniform(1.02, 1.12)          # run into the next note
+        else:
+            dur *= rng.uniform(0.82, 0.98)          # let go before the next
+        out.append((beat, max(0.05, dur), pitch, vel))
+    return out
+
+
+def compose(score: dict) -> tuple:
+    """score -> (Timeline, parts, ccs) where parts is
+    {track: [(beat, dur_beats, pitch, vel)]} and ccs is
+    {track: [(beat, controller, value)]}."""
+    tl = Timeline(score)
+    parts, ccs = {}, {}
+    for track in score["instruments"]:
+        # Seeded by track NAME, not position: editing the arrangement (adding a
+        # track, reordering, renaming another part) must not reshuffle the notes
+        # of every track after it. Stable seeds are what make an edit-and-
+        # re-render loop usable.
+        seed = (score["seed"] * 7919 + zlib.crc32(track["track"].encode())) % (2 ** 31)
+        rng = random.Random(seed)
+        if track.get("muted"):
+            # kept in the score (so the editor still shows the track and its
+            # settings) but contributes nothing to the render
+            parts[track["track"]] = []
+            continue
+        notes = WRITERS[track["role"]](tl, score, track, rng)
+        if score["swing"] > 0.01:
+            notes = _apply_swing(notes, score["swing"])
+
+        edited = bool(track.get("notes_override"))
+        if edited:
+            # hand-edited notes replace the generated part entirely
+            notes = [tuple(n[:4]) for n in track["notes_override"]]
+
+        if score.get("humanize", True):
+            # An edited part is authoritative: the timing, spread and length
+            # passes are SKIPPED for it, because the user placed those notes
+            # deliberately and re-humanizing them both moves them off the grid
+            # they were drawn on and compounds a little more drift on every
+            # edit-and-re-render cycle. Expression still applies — respecting
+            # the edit shouldn't mean the part goes back to sounding dead.
+            if not edited:
+                if track["role"] == "drums":
+                    notes = humanize_drums(notes, tl, rng)
+                notes = spread_chords(notes, track, tl, rng)
+                notes = shape_lengths(notes, track, rng)
+                notes = humanize_timing(notes, track, tl, rng)
+            if is_sustained(track):
+                ccs[track["track"]] = expression_curve(notes, track, tl, rng)
+        parts[track["track"]] = notes
+    return tl, parts, ccs
+
+
+def _apply_swing(notes: list, amount: float) -> list:
+    """Push every off-beat eighth later — the difference between a straight grid
+    and a groove that breathes."""
+    out = []
+    for beat, dur, pitch, vel in notes:
+        frac = beat % 1.0
+        if abs(frac - 0.5) < 0.06:
+            beat += 0.16 * amount
+        out.append((beat, dur, pitch, vel))
+    return out
+
+
+# ============================================================ MIDI
+
+def parts_to_midi(score: dict, tl: Timeline, parts: dict, path: Path,
+                  only: str = None, tail: float = 3.0, ccs: dict = None):
+    """Write MIDI. `only` renders a single track (for stems); otherwise the whole
+    arrangement, with pan (CC10) and volume (CC7) so the file opens in a DAW
+    already roughly balanced and placed in the stereo field."""
+    import pretty_midi
+
+    pm = pretty_midi.PrettyMIDI(initial_tempo=float(score["bpm"]))
+    for track in score["instruments"]:
+        if only and track["track"] != only:
+            continue
+        notes = parts.get(track["track"]) or []
+        drum = track["role"] in ("drums", "perc")
+        inst = pretty_midi.Instrument(program=0 if drum else track["program"],
+                                      is_drum=drum, name=track["track"][:24])
+        for beat, dur, pitch, vel in notes:
+            t0 = beat * tl.spb
+            inst.notes.append(pretty_midi.Note(velocity=int(vel), pitch=int(pitch),
+                                               start=t0,
+                                               end=t0 + max(0.05, dur * tl.spb)))
+        # within-note expression (see expression_curve) — the difference between
+        # a held chord and a played one
+        for beat, cc, val in (ccs or {}).get(track["track"], ()):
+            inst.control_changes.append(
+                pretty_midi.ControlChange(int(cc), int(val), max(0.0, beat * tl.spb)))
+        if not only:
+            pan = int(round(64 + 63 * track["pan"]))
+            inst.control_changes.append(pretty_midi.ControlChange(10, max(0, min(127, pan)), 0.0))
+            inst.control_changes.append(
+                pretty_midi.ControlChange(7, max(1, min(127, int(track["level"] * 100))), 0.0))
+        # a silent controller past the last note so FluidSynth renders the full
+        # release tail instead of cutting the file at the final note-off
+        inst.control_changes.append(
+            pretty_midi.ControlChange(11, 127, tl.duration + tail))
+        pm.instruments.append(inst)
+    pm.write(str(path))
+    return path
+
+
+# ============================================================ audio: FX + automation
+
+def _biquad(x, kind: str, freq: float, q: float = 0.707, gain_db: float = 0.0):
+    from scipy.signal import butter, iirfilter, sosfilt
+    freq = max(20.0, min(SR * 0.45, freq))
+    if kind in ("low", "high"):
+        sos = butter(2, freq, btype=kind, fs=SR, output="sos")
+    else:
+        sos = iirfilter(2, freq, btype="low" if kind == "shelf_lo" else "high",
+                        ftype="butter", fs=SR, output="sos")
+        wet = sosfilt(sos, x, axis=0)
+        return x + wet * (10 ** (gain_db / 20.0) - 1.0)
+    return sosfilt(sos, x, axis=0)
+
+
+def _sweep_lowpass(x, cutoff_env, block: int = 2048):
+    """Time-varying lowpass. Filter state carries across blocks (sosfilt zi), so
+    a full sweep from closed to open has no zipper noise at the block edges —
+    this is the workhorse behind every filter-automation move.
+
+    Cutoff is quantized to sixth-of-a-semitone steps and the designed filters
+    are cached: a four-minute sweep is ~5000 blocks, and redesigning a Butterworth
+    for each one costs more than the filtering itself."""
+    from scipy.signal import butter, sosfilt, sosfilt_zi
+    env = np.atleast_1d(np.asarray(cutoff_env, dtype=np.float32))
+    out = np.zeros_like(x)
+    design = {}
+    zi = None
+    for i in range(0, len(x), block):
+        seg = x[i:i + block]
+        if not len(seg):
+            break
+        frac = float(np.clip(env[min(i, len(env) - 1)], 0.0, 1.0))
+        q = round(frac * 72) / 72.0                   # ~1/6-semitone resolution
+        hz = 120.0 * (18000.0 / 120.0) ** q           # log-spaced: musical sweep
+        if hz >= SR * 0.44:
+            out[i:i + len(seg)] = seg
+            zi = None
+            continue
+        sos = design.get(q)
+        if sos is None:
+            sos = design[q] = butter(2, hz, btype="low", fs=SR, output="sos")
+        if zi is None:
+            zi = sosfilt_zi(sos) * float(seg[0])
+        y, zi = sosfilt(sos, seg, zi=zi)
+        out[i:i + len(seg)] = y
+    return out
+
+
+def make_ir(seconds: float, decay: float, damp: float, rng) -> "np.ndarray":
+    """Synthesized stereo reverb impulse: decaying noise, damped and predelayed.
+
+    A convolution reverb built this way costs ~15 lines and one FFT per track,
+    and sounds far better than a comb-filter box — which matters because six or
+    seven tracks all sharing one space is what makes a mix sound like a record
+    instead of a MIDI file."""
+    n = max(256, int(SR * seconds))
+    t = np.arange(n) / SR
+    env = np.exp(-t * decay)
+    ir = rng.standard_normal((n, 2)) * env[:, None]
+    ir = _biquad(ir, "low", damp)
+    pre = int(0.012 * SR)
+    ir[:pre] = 0.0
+    ir[:, 1] = np.roll(ir[:, 1], 37)               # decorrelate the channels
+    peak = np.sqrt((ir ** 2).sum(axis=0)).max() or 1.0
+    return ir / peak
+
+
+def convolve_wet(mono, ir):
+    # oaconvolve, not fftconvolve: overlap-add is the right algorithm for a
+    # multi-minute signal against a few-second kernel, and avoids FFT-ing ten
+    # million samples per channel per track.
+    from scipy.signal import oaconvolve
+    wet = np.zeros((len(mono), 2), dtype=np.float32)
+    for c in range(2):
+        wet[:, c] = oaconvolve(mono, ir[:, c])[:len(mono)]
+    return wet
+
+
+def tap_delay(mono, delay_samples: int, feedback: float, taps: int = 6,
+              ping_pong: bool = True):
+    """Tempo-synced echo as a sum of decaying taps — cheaper than a sample-wise
+    feedback loop and indistinguishable at these settings."""
+    out = np.zeros((len(mono), 2), dtype=np.float32)
+    for k in range(1, taps + 1):
+        d = delay_samples * k
+        if d >= len(mono):
+            break
+        g = feedback ** k
+        seg = mono[:len(mono) - d] * g
+        if ping_pong:
+            c = (k - 1) % 2
+            out[d:, c] += seg
+            out[d:, 1 - c] += seg * 0.35
+        else:
+            out[d:, 0] += seg
+            out[d:, 1] += seg
+    return _biquad(out, "low", 5200.0)
+
+
+def envelope(n: int, spec: list, tl: Timeline, score: dict, param: str,
+             default: float) -> "np.ndarray":
+    """Build a per-sample automation curve for one parameter.
+
+    'ramp' with a section name sweeps only inside that section (a build opening
+    its filter); without one it sweeps across the whole song. 'autopan' and
+    'tremolo' are LFOs with rates in bars, so they stay locked to the grid."""
+    env = np.full(n, default, dtype=np.float32)
+    for a in spec:
+        if a["param"] != param:
+            continue
+        if a["mode"] in ("autopan", "tremolo"):
+            period = max(0.05, a["bars"] * tl.bar_seconds)
+            t = np.arange(n) / SR
+            lfo = np.sin(2 * np.pi * t / period)
+            if a["mode"] == "autopan":
+                env = np.clip(default + a["depth"] * lfo, -1.0, 1.0).astype(np.float32)
+            else:
+                env = (default * (1.0 - a["depth"] * 0.5 * (1.0 - lfo))).astype(np.float32)
+            continue
+        s0, s1 = 0, n
+        if a["section"]:
+            want = a["section"].lower()
+            match = next((si for si, sec in enumerate(score["sections"])
+                          if sec["name"].lower() == want), None)
+            if match is None:                # tolerate near-misses ("build" / "buildup")
+                match = next((si for si, sec in enumerate(score["sections"])
+                              if want in sec["name"].lower()
+                              or sec["name"].lower() in want), None)
+            if match is None:
+                # a section name that matches nothing is skipped, NOT applied to
+                # the whole song — one typo'd name shouldn't blanket-filter the
+                # entire track for four minutes
+                continue
+            t0, t1 = tl.section_bounds(match)
+            s0, s1 = int(t0 * SR), min(n, int(t1 * SR))
+        if s1 <= s0:
+            continue
+        ramp = np.linspace(a["from"], a["to"], s1 - s0, dtype=np.float32)
+        env[s0:s1] = ramp
+        if s1 < n:
+            env[s1:] = a["to"]
+    return env
+
+
+TONE_EQ = {"warm": (("shelf_lo", 220.0, 3.0), ("low", 7000.0, 0.0)),
+           "bright": (("shelf_hi", 3500.0, 3.5),),
+           "dark": (("low", 2600.0, 0.0),),
+           "thin": (("high", 320.0, 0.0),),
+           "neutral": ()}
+
+
+def process_track(stem_wav: Path, track: dict, tl: Timeline, score: dict,
+                  n_out: int, rng) -> "np.ndarray":
+    """One track's whole channel strip: saturation -> tone -> automated filter
+    -> automated delay & reverb sends -> volume & pan automation -> stereo."""
+    import soundfile as sf
+
+    audio, sr = sf.read(str(stem_wav), always_2d=True, dtype="float32")
+    if sr != SR:
+        raise RuntimeError(f"{stem_wav.name}: unexpected sample rate {sr}")
+    mono = audio.mean(axis=1)
+    if len(mono) < n_out:
+        mono = np.pad(mono, (0, n_out - len(mono)))
+    mono = mono[:n_out]
+    auto = track["automation"]
+
+    if track["drive"] > 0.01:
+        k = 1.0 + 14.0 * track["drive"]
+        mono = np.tanh(mono * k) / np.tanh(k) * (1.0 - 0.25 * track["drive"])
+    for kind, freq, gain in TONE_EQ.get(track["tone"], ()):
+        mono = _biquad(mono, kind, freq, gain_db=gain)
+    if any(a["param"] == "cutoff" for a in auto):
+        mono = _sweep_lowpass(mono, envelope(n_out, auto, tl, score, "cutoff", 1.0))
+
+    wet = np.zeros((n_out, 2), dtype=np.float32)
+    if track["delay"] > 0.01:
+        # dotted-eighth on leads/arps (the classic wide echo), straight eighth
+        # elsewhere — a quarter-note delay on a busy part just smears it
+        beats = 0.75 if track["role"] in ("lead", "arp", "counter") else 0.5
+        d = int(beats * tl.spb * SR)
+        send = envelope(n_out, auto, tl, score, "delay", track["delay"])
+        wet += tap_delay(mono, d, 0.5) * send[:, None]
+    if track["reverb"] > 0.01:
+        size = {"pad": 2.6, "lead": 1.8, "chords": 1.5, "arp": 1.6,
+                "bass": 0.8, "drums": 1.0, "perc": 1.0, "counter": 1.8}[track["role"]]
+        ir = make_ir(size * (0.7 + 0.6 * track["reverb"]),
+                     decay=3.2 / size, damp=4200.0 + 3000.0 * track["reverb"], rng=rng)
+        send = envelope(n_out, auto, tl, score, "reverb", track["reverb"])
+        wet += convolve_wet(mono, ir) * (send * 0.85)[:, None]
+
+    vol = envelope(n_out, auto, tl, score, "volume", 1.0) * track["level"]
+    pan = envelope(n_out, auto, tl, score, "pan", track["pan"])
+    # constant-power panning: a part swept across the field keeps its loudness
+    ang = (np.clip(pan, -1.0, 1.0) + 1.0) * (math.pi / 4.0)
+    gl, gr = np.cos(ang), np.sin(ang)
+    out = np.empty((n_out, 2), dtype=np.float32)
+    dry = mono * vol
+    out[:, 0] = dry * gl + wet[:, 0] * vol
+    out[:, 1] = dry * gr + wet[:, 1] * vol
+    return out
+
+
+# ---- production FX (synthesized, not sampled) --------------------------------
+
+def _noise(n, rng):
+    return rng.standard_normal(n).astype(np.float32)
+
+
+def riser(seconds: float, rng) -> "np.ndarray":
+    """Noise sweep + rising sine into a downbeat: the standard build-up cue."""
+    n = int(seconds * SR)
+    t = np.arange(n) / SR
+    frac = (t / max(t[-1], 1e-6)) ** 1.6
+    swept = _sweep_lowpass(_noise(n, rng) * 0.5, 0.25 + 0.72 * frac)
+    tone = np.sin(2 * np.pi * np.cumsum(220.0 * (5.5 ** frac)) / SR) * 0.16
+    amp = frac ** 1.4
+    mono = (swept * 0.75 + tone) * amp
+    out = np.stack([mono, np.roll(mono, 90)], axis=1)
+    return _biquad(out, "high", 180.0) * 0.55
+
+
+def impact(rng) -> "np.ndarray":
+    """Sub boom + damped noise crack for a section downbeat."""
+    n = int(2.2 * SR)
+    t = np.arange(n) / SR
+    sub = np.sin(2 * np.pi * np.cumsum(np.linspace(78.0, 32.0, n)) / SR) * np.exp(-t * 2.6)
+    crack = _biquad(_noise(n, rng), "low", 2600.0) * np.exp(-t * 7.0) * 0.35
+    mono = (sub * 0.85 + crack).astype(np.float32)
+    return np.stack([mono, np.roll(mono, 23)], axis=1) * 0.8
+
+
+def downlifter(seconds: float, rng) -> "np.ndarray":
+    n = int(seconds * SR)
+    t = np.arange(n) / SR
+    frac = t / max(t[-1], 1e-6)
+    swept = _sweep_lowpass(_noise(n, rng) * 0.45, 0.85 - 0.7 * frac)
+    tone = np.sin(2 * np.pi * np.cumsum(np.linspace(900.0, 120.0, n)) / SR) * 0.14
+    mono = (swept + tone) * (1.0 - frac) ** 1.2
+    return np.stack([mono, np.roll(mono, -70)], axis=1) * 0.5
+
+
+def kick_duck(parts: dict, tl: Timeline, score: dict, n: int) -> "np.ndarray":
+    """Sidechain envelope from the actual kick hits, so pads/chords breathe with
+    the beat. Built from the MIDI rather than by detecting the audio — exact,
+    and free."""
+    env = np.ones(n, dtype=np.float32)
+    drums = [t["track"] for t in score["instruments"] if t["role"] == "drums"]
+    hold, rel = int(0.045 * SR), int(0.17 * SR)
+    shape = np.concatenate([np.full(hold, 0.35),
+                            np.linspace(0.35, 1.0, rel)]).astype(np.float32)
+    for name in drums:
+        for beat, _dur, pitch, _vel in parts.get(name, []):
+            if pitch not in (DRUM["kick"], DRUM["kick2"]):
+                continue
+            i = int(beat * tl.spb * SR)
+            j = min(n, i + len(shape))
+            if i < n:
+                env[i:j] = np.minimum(env[i:j], shape[:j - i])
+    return env
+
+
+def add_production_fx(bus, tl: Timeline, score: dict, rng):
+    """Risers, impacts, downlifters and drop silences, placed from each section's
+    fx list. A 'riser' belongs to the section it builds OUT OF, so it lands
+    exactly on the next section's downbeat."""
+    n = len(bus)
+
+    def mix_at(sig, t0):
+        i = max(0, int(t0 * SR))
+        j = min(n, i + len(sig))
+        if j > i:
+            bus[i:j] += sig[:j - i]
+
+    for si, sec in enumerate(score["sections"]):
+        t0, t1 = tl.section_bounds(si)
+        for fx in sec["fx"]:
+            if fx == "riser":
+                length = min(2 * tl.bar_seconds, t1 - t0)
+                mix_at(riser(length, rng), t1 - length)
+            elif fx == "impact":
+                mix_at(impact(rng), t0)
+            elif fx == "downlifter":
+                mix_at(downlifter(min(1.6, tl.bar_seconds), rng), t1)
+            elif fx == "drop":
+                # a beat of near-silence before the downbeat makes the drop hit
+                i = max(0, int((t0 - tl.spb) * SR))
+                j = min(n, int(t0 * SR))
+                if j > i:
+                    bus[i:j] *= np.linspace(0.6, 0.02, j - i)[:, None]
+            elif fx == "filter_sweep":
+                i, j = max(0, int(t0 * SR)), min(n, int(t1 * SR))
+                if j > i + SR:
+                    # opens from ~1.1 kHz, not ~470 Hz, and on a curve that
+                    # clears the muffled zone early: this filters the WHOLE mix,
+                    # and a linear sweep from near-closed left a 30-second
+                    # section sounding like it was playing underwater
+                    envl = (0.45 + 0.55 * np.linspace(0.0, 1.0, j - i,
+                                                      dtype=np.float32) ** 0.55)
+                    for c in range(2):
+                        bus[i:j, c] = _sweep_lowpass(bus[i:j, c], envl)
+    return bus
+
+
+# ============================================================ render pipeline
+
+def _run(cmd, **kw):
+    p = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                       text=True, errors="replace", **kw)
+    if p.returncode != 0:
+        raise RuntimeError(f"{Path(cmd[0]).name} failed: "
+                           f"{(p.stderr or '').strip()[-400:]}")
+
+
+def _ffmpeg_exe(name: str = "ffmpeg") -> str:
+    import glob
+    found = shutil.which(name)
+    if found:
+        return found
+    hits = glob.glob(os.path.join(os.environ.get("LOCALAPPDATA", ""), "Microsoft",
+                     "WinGet", "Packages", "Gyan.FFmpeg*", "**", f"{name}.exe"),
+                     recursive=True)
+    if hits:
+        return hits[0]
+    raise RuntimeError(f"{name} not found — install it: winget install Gyan.FFmpeg")
+
+
+def _progress(outdir: Path, step: int, total: int, current: str):
+    """Live progress for the web UI — the server polls this file while the
+    subprocess runs, so a 60-second render isn't a blank spinner."""
+    try:
+        (outdir / "progress.json").write_text(json.dumps(
+            {"step": step, "total": total, "current": current}), encoding="utf-8")
+    except Exception:
+        pass
+    print(f"[{step}/{total}] {current}", flush=True)
+
+
+def render_stem_wav(midi: Path, wav: Path, soundfont: Path, gain: float = 0.8):
+    _run([str(FLUIDSYNTH), "-ni", "-F", str(wav), "-r", str(SR), "-g", str(gain),
+          "-o", "synth.reverb.active=0", "-o", "synth.chorus.active=0",
+          "-o", "synth.polyphony=512",
+          str(soundfont), str(midi)])
+    return wav
+
+
+def master(mix_wav: Path, out_wav: Path, out_mp3: Path):
+    """Bus glue + streaming loudness. ffmpeg does the dynamics here for the same
+    reason lullabykit does: loudnorm's two-pass-in-one-filter behaviour is hard
+    to beat by hand, and the chain is one process."""
+    ff = _ffmpeg_exe()
+    # loudnorm before the limiter, not after: normalizing last would undo the
+    # limiting and put peaks back over the ceiling
+    chain = ("highpass=f=28,"
+             "acompressor=threshold=0.12:ratio=2.4:attack=12:release=220:makeup=1.4,"
+             "loudnorm=I=-14:TP=-1.0:LRA=11,"
+             "alimiter=limit=0.97:attack=5:release=60,"
+             "afade=t=in:d=0.05")
+    _run([ff, "-y", "-v", "error", "-i", str(mix_wav), "-af", chain,
+          "-ar", str(SR), "-c:a", "pcm_s16le", str(out_wav)])
+    _run([ff, "-y", "-v", "error", "-i", str(out_wav), "-c:a", "libmp3lame",
+          "-q:a", "1", str(out_mp3)])
+
+
+def arrangement_md(score: dict) -> str:
+    lines = [f"# {score['title']}", "",
+             f"**{score['genre']}** · {score['key']} · {score['bpm']} bpm · "
+             f"{score['time_signature']}/4 · {score['total_bars']} bars · "
+             f"{int(score['duration'] // 60)}:{int(score['duration'] % 60):02d}", ""]
+    if score["brief"]:
+        lines += [f"> {score['brief']}", ""]
+    if score["notes"]:
+        lines += ["## Producer's notes", "", score["notes"], ""]
+    lines += ["## Instruments", "",
+              "| Track | Role | Instrument (GM) | Level | Pan | Reverb | Delay | Drive | Automation |",
+              "|---|---|---|---|---|---|---|---|---|"]
+    for t in score["instruments"]:
+        pan = "C" if abs(t["pan"]) < 0.05 else \
+            f"{'L' if t['pan'] < 0 else 'R'}{abs(round(t['pan'] * 100))}"
+        auto = ", ".join(
+            f"{a['param']} {a['mode']}" + (f" ({a['section']})" if a["section"] else "")
+            for a in t["automation"]) or "—"
+        lines.append(f"| {t['track']} | {t['role']} | {t['instrument']} | "
+                     f"{t['level']:.2f} | {pan} | {t['reverb']:.2f} | {t['delay']:.2f} | "
+                     f"{t['drive']:.2f} | {auto} |")
+    lines += ["", "## Structure", "", "| Section | Bars | Energy | Chords | Playing | FX |",
+              "|---|---|---|---|---|---|"]
+    for s in score["sections"]:
+        lines.append(f"| {s['name']} | {s['bars']} | {s['energy']:.2f} | "
+                     f"{' · '.join(s['chord_symbols']) or '—'} | "
+                     f"{', '.join(s['tracks'])} | {', '.join(s['fx']) or '—'} |")
+    lines += ["", "## Files", "",
+              "- `<name>.mp3` / `.wav` — the master",
+              "- `<name>.mid` — full multitrack MIDI with pan/volume CCs "
+              "(open it in a DAW and swap in your own plugins)",
+              "- `stems/*.flac` — per-track stems, post-FX and pre-master",
+              "- `score.json` — the exact plan this render came from", ""]
+    if score["warnings"]:
+        lines += ["## Plan repairs", ""] + [f"- {w}" for w in score["warnings"]] + [""]
+    return "\n".join(lines)
+
+
+def render(score: dict, out_base: Path, keep_stems: bool = True) -> dict:
+    import soundfile as sf
+
+    if np is None:
+        raise RuntimeError("numpy is required — run this with lullabykit's venv python")
+    if not FLUIDSYNTH.is_file():
+        raise RuntimeError(f"FluidSynth not found at {FLUIDSYNTH}")
+    lib = soundfont_library()
+    if not lib["usable"]:
+        raise RuntimeError(f"no GM soundfont under {SF_BUDGET_MB} MB in {SOUNDFONTS}")
+    soundfont = Path(lib["usable"][0]["path"])
+
+    outdir = out_base.parent
+    outdir.mkdir(parents=True, exist_ok=True)
+    work = outdir / "_work"
+    work.mkdir(exist_ok=True)
+    stems_dir = outdir / "stems"
+    # a re-render can have fewer/renamed tracks than the last one — stale stems
+    # would otherwise linger on disk and keep appearing in the UI
+    shutil.rmtree(stems_dir, ignore_errors=True)
+    for old in outdir.glob("*_polished.mp3"):
+        old.unlink(missing_ok=True)
+    if keep_stems:
+        stems_dir.mkdir(parents=True, exist_ok=True)
+
+    tracks = score["instruments"]
+    # stem/MIDI filenames come from slugged track names, and two distinct names
+    # can slug the same ("pad 1" and "pad-1"), which would overwrite one stem
+    # with the other's audio — assign unique slugs up front
+    slugs, used = {}, set()
+    for t in tracks:
+        base = _slug(t["track"])
+        s, k = base, 2
+        while s in used:
+            s, k = f"{base}_{k}", k + 1
+        used.add(s)
+        slugs[t["track"]] = s
+
+    total = len(tracks) * 2 + 4
+    step = 0
+    _progress(outdir, step, total, "arranging")
+
+    tl, parts, ccs = compose(score)
+    (outdir / "score.json").write_text(json.dumps(score, indent=2), encoding="utf-8")
+    (outdir / "arrangement.md").write_text(arrangement_md(score), encoding="utf-8")
+    step += 1
+    _progress(outdir, step, total, f"{score['total_bars']} bars written — rendering parts")
+
+    # ---- one stem per track, so each gets its own channel strip ----
+    raw = {}
+    for t in tracks:
+        step += 1
+        _progress(outdir, step, total, f"playing {t['track']} · {t['instrument']}")
+        mid = work / f"{slugs[t['track']]}.mid"
+        parts_to_midi(score, tl, parts, mid, only=t["track"], ccs=ccs)
+        wav = work / f"{slugs[t['track']]}.wav"
+        render_stem_wav(mid, wav, soundfont)
+        raw[t["track"]] = wav
+
+    tail = 4.0
+    n_out = int((tl.duration + tail) * SR)
+    bus = np.zeros((n_out, 2), dtype=np.float32)
+    duck = kick_duck(parts, tl, score, n_out) if score["sidechain"] else None
+
+    for t in tracks:
+        step += 1
+        _progress(outdir, step, total, f"mixing {t['track']} — fx & automation")
+        # zlib.crc32, not hash(): str hashing is salted per process, which would
+        # make an identical seed render differently on every run
+        rng = np.random.default_rng(score["seed"] + zlib.crc32(t["track"].encode()) % 99991)
+        chan = process_track(raw[t["track"]], t, tl, score, n_out, rng)
+        if duck is not None and t["role"] in ("pad", "chords", "arp", "counter"):
+            chan *= duck[:, None]
+        bus += chan
+        if keep_stems:
+            peak = float(np.abs(chan).max()) or 1.0
+            # FLAC, not WAV: lossless, every DAW reads it, and it roughly halves
+            # the download — a set of WAV stems for one song runs to ~160 MB
+            sf.write(stems_dir / f"{slugs[t['track']]}.flac",
+                     chan / max(1.0, peak / 0.98), SR)
+
+    step += 1
+    _progress(outdir, step, total, "risers, impacts & drops")
+    add_production_fx(bus, tl, score, np.random.default_rng(score["seed"] + 99))
+
+    step += 1
+    _progress(outdir, step, total, "mastering")
+    peak = float(np.abs(bus).max()) or 1.0
+    if peak > 0.98:
+        bus = bus / peak * 0.98
+    fade = int(min(3.0, tl.bar_seconds) * SR)
+    bus[-fade:] *= np.linspace(1.0, 0.0, fade)[:, None]
+    premix = work / "mix.wav"
+    sf.write(premix, bus, SR)
+
+    out_wav, out_mp3 = out_base.with_suffix(".wav"), out_base.with_suffix(".mp3")
+    master(premix, out_wav, out_mp3)
+    parts_to_midi(score, tl, parts, out_base.with_suffix(".mid"), ccs=ccs)
+
+    step += 1
+    _progress(outdir, step, total, "done")
+    shutil.rmtree(work, ignore_errors=True)
+    files = [out_mp3, out_wav, out_base.with_suffix(".mid"),
+             outdir / "arrangement.md", outdir / "score.json"]
+    if keep_stems:
+        files += sorted(stems_dir.glob("*.flac"))
+    return {"files": [str(f) for f in files if f.exists()],
+            "duration": round(tl.duration, 1), "score": score}
+
+
+def notes_payload(score: dict) -> dict:
+    """The composed parts in a form the piano-roll editor can draw and send back.
+
+    Notes are given in BEATS (not seconds) because that is what the editor's grid
+    is drawn in and what survives a later tempo change. Emitted post-humanization
+    so what you see is what you heard; a track you then edit is stored as
+    notes_override and replays verbatim."""
+    tl, parts, _ccs = compose(score)
+    out = {}
+    for t in score["instruments"]:
+        out[t["track"]] = [[round(b, 4), round(d, 4), int(p), int(v)]
+                           for b, d, p, v in sorted(parts.get(t["track"], []),
+                                                    key=lambda n: (n[0], n[2]))]
+    return {"bpm": score["bpm"], "beats_per_bar": tl.bpb,
+            "total_beats": round(tl.total_beats, 3),
+            "sections": [{"name": s["name"], "bars": s["bars"]}
+                         for s in score["sections"]],
+            "notes": out}
+
+
+def _slug(s: str) -> str:
+    return "".join(c if (c.isalnum() or c in "-_") else "_" for c in s)[:40] or "track"
+
+
+# ============================================================ CLI
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    r = sub.add_parser("render", help="render a score plan to a finished track")
+    r.add_argument("--score", type=Path, required=True, help="score JSON (any subset)")
+    r.add_argument("--out", type=Path, required=True,
+                   help="output base path, e.g. compositions/x/x (no extension)")
+    r.add_argument("--no-stems", action="store_true")
+
+    sub.add_parser("library", help="print the instrument/soundfont catalog as JSON")
+
+    n = sub.add_parser("normalize", help="repair a plan and print the final score")
+    n.add_argument("--score", type=Path, required=True)
+
+    p = sub.add_parser("notes", help="print the composed notes (for the editor)")
+    p.add_argument("--score", type=Path, required=True)
+
+    args = ap.parse_args()
+
+    if args.cmd == "library":
+        print(json.dumps(soundfont_library(), indent=2))
+        return 0
+    raw = json.loads(args.score.read_text(encoding="utf-8"))
+    score = normalize_score(raw)
+    if args.cmd == "normalize":
+        print(json.dumps(score, indent=2))
+        return 0
+    if args.cmd == "notes":
+        print(json.dumps(notes_payload(score)))
+        return 0
+
+    t0 = time.time()
+    result = render(score, args.out, keep_stems=not args.no_stems)
+    result["seconds"] = round(time.time() - t0, 1)
+    print(json.dumps(result))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+```
+
+## File 4 of 27 — `%USERPROFILE%\local-ai-studio\sf3convert.py`
+
+```python
+#!/usr/bin/env python3
+"""sf3convert: shrink a SoundFont by storing its samples as Ogg Vorbis (SF2 -> SF3).
+
+Why this exists: the Salamander Grand Piano ships as a 1.2 GB .sf2 whose sample
+chunk is 100% uncompressed 16-bit PCM — 960 individual samples (16 velocity
+layers x 30 stereo key zones). Nothing about the *instrument* is 1.2 GB; the
+format simply has no compression. SF3 is the same SoundFont container with each
+sample replaced by an Ogg Vorbis stream, and the bundled FluidSynth 2.4.7 reads
+it (probed: renders at 0.9963 waveform correlation against the raw PCM original,
+at ~16% of the size).
+
+What changes, per the SF3 convention FluidSynth implements:
+  * the `smpl` chunk becomes concatenated Ogg Vorbis streams
+  * each `shdr` record's dwStart/dwEnd become BYTE offsets into that chunk
+    (they are sample-frame indices in SF2)
+  * loop points become frame offsets RELATIVE to the sample start
+  * sfSampleType gets bit 0x10 set, marking the sample compressed
+  * the `ifil` version chunk is bumped to 3.x
+Every other chunk is copied through byte-for-byte.
+
+The source file is never modified — the SF3 is written alongside it.
+
+STATUS — NOT YET WORKING, kept because it is close and the win is large.
+Converting Salamander produces a 94.3 MB font (7.8% of 1207.8 MB) in 43s that
+loads, decays correctly, keeps its stereo image, and correlates 0.99 against the
+original on a single note. But a per-note sweep shows its peak level depends
+only on VELOCITY and not on pitch (0.049 / 0.197 / 0.442 at vel 40/80/120,
+identical for notes 36 through 84), i.e. every key ends up playing the same
+sample data. Something about the rewritten dwStart/dwEnd byte offsets or the
+loop-point convention is not what FluidSynth's SF3 reader expects. Do not ship
+output from this until verify() passes — see the note in verify() about why a
+correlation check alone is not enough to catch this.
+
+Usage:
+  python sf3convert.py in.sf2 [--out out.sf3] [--quality 0.6] [--verify]
+"""
+from __future__ import annotations
+
+import argparse
+import io
+import struct
+import sys
+import time
+from pathlib import Path
+
+import numpy as np
+import soundfile as sf
+
+VORBIS_FLAG = 0x10       # sfSampleType bit: this sample is Ogg Vorbis
+SHDR_LEN = 46            # bytes per sample header record
+WRITE_BLOCK = 65536      # frames per write — see the note in convert()
+
+
+def _chunks(data: bytes, start: int, end: int):
+    """Walk the RIFF chunks in [start, end) -> (tag, payload_start, payload_len)."""
+    i = start
+    while i + 8 <= end:
+        tag = data[i:i + 4]
+        n = struct.unpack("<I", data[i + 4:i + 8])[0]
+        yield tag, i + 8, n
+        i += 8 + n + (n & 1)          # chunks are word-aligned
+
+
+def _find(data: bytes):
+    """Locate the sdta/pdta lists and the chunks we need to rewrite."""
+    if data[:4] != b"RIFF" or data[8:12] != b"sfbk":
+        raise SystemExit("not a SoundFont (missing RIFF/sfbk header)")
+    total = struct.unpack("<I", data[4:8])[0]
+    found = {}
+    for tag, off, n in _chunks(data, 12, min(len(data), 8 + total)):
+        if tag == b"LIST":
+            kind = data[off:off + 4]
+            found[kind] = (off + 4, n - 4)
+            for sub, soff, sn in _chunks(data, off + 4, off + n):
+                found[sub] = (soff, sn)
+        else:
+            found[tag] = (off, n)
+    for need in (b"smpl", b"shdr", b"ifil"):
+        if need not in found:
+            raise SystemExit(f"SoundFont is missing its {need.decode()} chunk")
+    return found
+
+
+def _pad(b: bytes) -> bytes:
+    return b + (b"\0" if len(b) % 2 else b"")
+
+
+def _chunk(tag: bytes, payload: bytes) -> bytes:
+    return tag + struct.pack("<I", len(payload)) + _pad(payload)
+
+
+def convert(src: Path, dst: Path, quality: float = 0.6,
+            progress_every: int = 60) -> dict:
+    data = src.read_bytes()
+    at = _find(data)
+    smpl_off, smpl_len = at[b"smpl"]
+    shdr_off, shdr_len = at[b"shdr"]
+    n_rec = shdr_len // SHDR_LEN
+
+    pcm = np.frombuffer(data, dtype="<i2", count=smpl_len // 2, offset=smpl_off)
+
+    new_smpl = io.BytesIO()
+    new_shdr = bytearray()
+    t0 = time.time()
+    converted = 0
+
+    for k in range(n_rec):
+        rec = bytearray(data[shdr_off + SHDR_LEN * k:shdr_off + SHDR_LEN * (k + 1)])
+        name = bytes(rec[:20]).split(b"\0")[0]
+        start, end, loop_s, loop_e, rate = struct.unpack("<IIIII", rec[20:40])
+        orig_pitch, pitch_corr, link, stype = struct.unpack("<BbHH", rec[40:46])
+
+        # the terminal record (and anything degenerate) is copied as-is
+        if name == b"EOS" or end <= start or k == n_rec - 1:
+            new_shdr += rec
+            continue
+
+        frames = pcm[start:end]
+        if not len(frames):
+            new_shdr += rec
+            continue
+
+        buf = io.BytesIO()
+        with sf.SoundFile(buf, "w", samplerate=int(rate) or 44100, channels=1,
+                          format="OGG", subtype="VORBIS") as f:
+            # Write in blocks. Handing libsndfile's Vorbis encoder a single
+            # million-frame buffer crashes the process outright (no exception —
+            # the interpreter dies), and Salamander's samples are ~21 s each.
+            fl = frames.astype(np.float32) / 32768.0
+            for i in range(0, len(fl), WRITE_BLOCK):
+                f.write(fl[i:i + WRITE_BLOCK])
+        ogg = buf.getvalue()
+
+        byte_start = new_smpl.tell()
+        new_smpl.write(ogg)
+        byte_end = new_smpl.tell()
+
+        struct.pack_into("<IIIII", rec, 20, byte_start, byte_end,
+                         max(0, loop_s - start), max(0, loop_e - start), rate)
+        struct.pack_into("<BbHH", rec, 40, orig_pitch, pitch_corr, link,
+                         stype | VORBIS_FLAG)
+        new_shdr += rec
+        converted += 1
+        if progress_every and converted % progress_every == 0:
+            done = new_smpl.tell()
+            print(f"   {converted}/{n_rec - 1} samples · "
+                  f"{done / 1048576:.0f} MB written · {time.time() - t0:.0f}s",
+                  flush=True)
+
+    smpl_new = new_smpl.getvalue()
+
+    # rebuild: sdta gets the compressed smpl, pdta gets the rewritten shdr,
+    # everything else is passed through untouched
+    out_info = bytearray(b"INFO")
+    for tag, off, n in _chunks(data, *(at[b"INFO"][0], at[b"INFO"][0] + at[b"INFO"][1])):
+        payload = data[off:off + n]
+        if tag == b"ifil":
+            payload = struct.pack("<HH", 3, 0)       # declare SF3
+        out_info += _chunk(tag, payload)
+
+    out_pdta = bytearray(b"pdta")
+    for tag, off, n in _chunks(data, *(at[b"pdta"][0], at[b"pdta"][0] + at[b"pdta"][1])):
+        payload = bytes(new_shdr) if tag == b"shdr" else data[off:off + n]
+        out_pdta += _chunk(tag, payload)
+
+    body = (b"sfbk"
+            + _chunk(b"LIST", bytes(out_info))
+            + _chunk(b"LIST", b"sdta" + _chunk(b"smpl", smpl_new))
+            + _chunk(b"LIST", bytes(out_pdta)))
+    dst.write_bytes(b"RIFF" + struct.pack("<I", len(body)) + body)
+
+    return {"samples": converted,
+            "src_mb": round(len(data) / 1048576, 1),
+            "dst_mb": round(dst.stat().st_size / 1048576, 1),
+            "seconds": round(time.time() - t0, 1)}
+
+
+def _render_note(font: Path, fluidsynth: Path, work: Path, note: int, vel: int):
+    import mido
+    import subprocess
+    mid = work / "n.mid"
+    m = mido.MidiFile(ticks_per_beat=480)
+    tr = mido.MidiTrack()
+    m.tracks.append(tr)
+    tr.append(mido.Message("program_change", program=0, channel=0, time=0))
+    tr.append(mido.Message("note_on", note=note, velocity=vel, channel=0, time=0))
+    tr.append(mido.Message("note_off", note=note, velocity=0, channel=0, time=480 * 3))
+    m.save(str(mid))
+    wav = work / "n.wav"
+    r = subprocess.run([str(fluidsynth), "-ni", "-F", str(wav), "-r", "48000",
+                        "-g", "0.7", "-o", "synth.reverb.active=0",
+                        "-o", "synth.chorus.active=0", str(font), str(mid)],
+                       capture_output=True, text=True)
+    if r.returncode != 0 or not wav.is_file():
+        return None
+    a, _ = sf.read(str(wav), always_2d=True)
+    return a.mean(axis=1)
+
+
+def verify(sf2: Path, sf3: Path, fluidsynth: Path, work: Path) -> dict:
+    """Prove the converted font still maps NOTE -> SAMPLE correctly.
+
+    A whole-song correlation is not enough: an earlier version of this check
+    passed a font whose every key played the same sample, because the two
+    renders still correlated at 0.94 overall. The tell was that the SF3's peak
+    level depended only on velocity and not at all on pitch. So the real test
+    sweeps notes and asks whether the per-note level PATTERN survives — if the
+    converted font's levels no longer vary with pitch the way the original's do,
+    the sample offsets are wrong no matter how good the correlation looks."""
+    work.mkdir(parents=True, exist_ok=True)
+    notes, vel = (36, 48, 60, 72, 84), 80
+    peaks = {"sf2": [], "sf3": []}
+    corrs = []
+    for note in notes:
+        a = _render_note(sf2, fluidsynth, work, note, vel)
+        b = _render_note(sf3, fluidsynth, work, note, vel)
+        if a is None or b is None or len(a) < 1000 or len(b) < 1000:
+            return {"ok": False, "error": f"note {note} failed to render"}
+        peaks["sf2"].append(float(np.abs(a).max()))
+        peaks["sf3"].append(float(np.abs(b).max()))
+        n = min(len(a), len(b))
+        corrs.append(float(np.corrcoef(a[:n], b[:n])[0, 1]))
+
+    p2, p3 = np.array(peaks["sf2"]), np.array(peaks["sf3"])
+    # relative variation of level across pitch, in each font
+    spread2 = float(p2.std() / max(p2.mean(), 1e-9))
+    spread3 = float(p3.std() / max(p3.mean(), 1e-9))
+    pitch_ok = spread3 > 0.35 * spread2          # SF3 must still vary with pitch
+    corr_ok = min(corrs) > 0.9
+    return {"ok": bool(pitch_ok and corr_ok),
+            "min_correlation": round(min(corrs), 4),
+            "pitch_level_spread_sf2": round(spread2, 4),
+            "pitch_level_spread_sf3": round(spread3, 4),
+            "pitch_mapping_ok": bool(pitch_ok),
+            "peaks_sf2": [round(x, 5) for x in p2],
+            "peaks_sf3": [round(x, 5) for x in p3]}
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("src", type=Path)
+    ap.add_argument("--out", type=Path, default=None)
+    ap.add_argument("--quality", type=float, default=0.6)
+    ap.add_argument("--verify", action="store_true",
+                    help="render both fonts and correlate (recommended)")
+    args = ap.parse_args()
+
+    src = args.src
+    if not src.is_file():
+        raise SystemExit(f"not found: {src}")
+    dst = args.out or src.with_suffix(".sf3")
+    print(f"converting {src.name} -> {dst.name}", flush=True)
+    info = convert(src, dst, quality=args.quality)
+    print(f"   {info['samples']} samples · {info['src_mb']} MB -> {info['dst_mb']} MB "
+          f"({info['dst_mb'] / max(info['src_mb'], 1e-9):.1%}) in {info['seconds']}s",
+          flush=True)
+
+    if args.verify:
+        fs = Path(__file__).resolve().parent / "lullabykit" / "bin" / "fluidsynth" / "bin" / "fluidsynth.exe"
+        v = verify(src, dst, fs, dst.parent / "_sf3verify")
+        print(f"   verify: {v}", flush=True)
+        if not v.get("ok"):
+            print("   FAILED — leaving the original in place; delete the .sf3",
+                  file=sys.stderr)
+            return 1
+    print(f"done: {dst}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+```
+
+## File 5 of 27 — `%USERPROFILE%\local-ai-studio\lullabykit\pipeline.py`
+
+```python
+"""
+lullabykit: turn a song into a soft piano + music-box lullaby instrumental.
+
+v2 — musical arrangement engine. The v1 approach (transcribe the whole mix,
+top-note-is-melody, pitch-class chord clusters) produced random-sounding notes;
+v2 fixes that with actual music analysis:
+
+  analysis   : beat grid + bar phase, key detection (Krumhansl-Schmuckler),
+               per-bar diatonic chord recognition (chroma template matching with
+               a bass-stem root prior)
+  melody     : transcribed from the ISOLATED VOCAL stem only (basic-pitch),
+               then cleaned — monophony enforcement, octave-jump repair,
+               scale snapping, eighth-note grid quantization, phrase-shaped
+               velocities (falls back to the 'other' stem for instrumentals)
+  arrangement: rebuilt from scratch on a clean grid at a true lullaby tempo
+               (55-88 bpm): rocking broken-chord piano left hand, legato melody
+               right hand, music-box doubling an octave up, optional soft string
+               pad, sustain pedal per bar
+  sound      : piano rendered with the Salamander Grand (real sampled Yamaha C5)
+               when present, layers with FluidR3 GM; large-room FluidSynth
+               reverb; warm mastering chain (shelf EQ, gentle compression,
+               loudness normalization, long fades)
+
+melody-match engine (--engine melody-match) — an alternative to the above for
+when the arranged engine's scale-snap + eighth-grid quantization mangles a
+florid or heavily-ornamented vocal line into something unrecognizable. Traces
+the singer's actual continuous pitch curve with FCPE (10ms resolution, no
+scale/grid quantization) and plays it back on a single portamento-capable
+instrument via per-frame MIDI pitch-bend + expression. Validated by
+round-tripping FCPE over the rendered output and correlating against the
+original vocal's F0: 0.94-0.99 correlation across two real songs, vs. the
+arranged engine's -0.03 to ~0.6 on material it struggles with.
+
+Usage:
+  .venv\\Scripts\\python.exe pipeline.py "song.mp3" [--tempo-scale 0.72]
+      [--out output\\name] [--from-stage arrange] [--no-celesta] [--no-pad]
+  .venv\\Scripts\\python.exe pipeline.py "song.mp3" --engine melody-match
+      --continuous-instrument cello [--melody-stems '{"vocals":1}']
+"""
+
+import argparse
+import glob
+import json
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+import numpy as np
+import pretty_midi
+import mido
+
+ROOT = Path(__file__).resolve().parent
+FLUIDSYNTH = ROOT / "bin" / "fluidsynth" / "bin" / "fluidsynth.exe"
+SF_FLUIDR3 = ROOT / "soundfonts" / "FluidR3_GM.sf2"
+WORK = ROOT / "work"
+OUTPUT = ROOT / "output"
+
+PROG_PIANO = 0        # GM Acoustic Grand
+PROG_MUSIC_BOX = 10   # GM Music Box
+PROG_STRINGS = 48     # GM String Ensemble 1
+
+# melody-match engine: portamento-capable instruments, picked for how closely
+# they can trace a continuous vocal pitch curve (a fixed-pitch instrument like
+# piano can't glide between notes at all). Cello is the default — warm, clearly
+# instrumental (not uncanny like a "voice" patch), and scored joint-best with
+# synth_voice in round-trip pitch-fidelity testing across two real songs.
+CONTINUOUS_INSTRUMENTS = {
+    "cello": 42, "violin": 40, "flute": 73, "synth_voice": 54,
+    "music_box": PROG_MUSIC_BOX,
+}
+# each note's own base pitch already sits at its true semitone (_segment_notes
+# anchors it), so the residual bend only needs to cover vibrato/expression —
+# not a whole phrase's range like an earlier, buggier version of this engine
+# that used one note per phrase and bent through the entire tune (sounded
+# like a siren/theremin wail, not a melody). Narrower range = finer per-cent
+# resolution from the same 14-bit MIDI bend value.
+BEND_RANGE_SEMITONES = 4
+
+# scale degrees (semitones from tonic) of the diatonic triads we allow
+MAJOR_SCALE = [0, 2, 4, 5, 7, 9, 11]
+MINOR_SCALE = [0, 2, 3, 5, 7, 8, 10]
+MAJOR_TRIADS = [(0, "maj"), (2, "min"), (4, "min"), (5, "maj"), (7, "maj"), (9, "min")]
+MINOR_TRIADS = [(0, "min"), (3, "maj"), (5, "min"), (7, "min"), (8, "maj"), (10, "maj")]
+
+# Krumhansl-Schmuckler key profiles
+KS_MAJOR = np.array([6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88])
+KS_MINOR = np.array([6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17])
+
+NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+
+
+def _ffmpeg_exe(name: str = "ffmpeg") -> str:
+    found = shutil.which(name)
+    if found:
+        return found
+    hits = glob.glob(os.path.join(os.environ.get("LOCALAPPDATA", ""), "Microsoft",
+                     "WinGet", "Packages", "Gyan.FFmpeg*", "**", f"{name}.exe"),
+                     recursive=True)
+    if hits:
+        return hits[0]
+    raise RuntimeError(f"{name} not found — install it: winget install Gyan.FFmpeg")
+
+
+def piano_soundfont() -> Path:
+    """Salamander Grand if installed (much better piano), else FluidR3 GM."""
+    for hit in ROOT.joinpath("soundfonts").glob("**/*.sf2"):
+        if "salamander" in hit.name.lower():
+            return hit
+    return SF_FLUIDR3
+
+
+def run(cmd, **kw):
+    print(f"$ {' '.join(str(c) for c in cmd)}", flush=True)
+    subprocess.run(cmd, check=True, **kw)
+
+
+# ---------------------------------------------------------------- stages 1-3
+
+def extract_audio(input_path: Path, out_wav: Path, sr: int = 44100) -> Path:
+    run([_ffmpeg_exe(), "-y", "-i", str(input_path),
+         "-vn", "-ac", "2", "-ar", str(sr), str(out_wav)])
+    return out_wav
+
+
+# htdemucs_ft: Demucs's own recommended production model for vocals/drums/
+# bass/other — a 4-model ensemble ("fine-tuned"), ~4x slower than the base
+# model but no cross-source bleed. htdemucs_6s (the old default here) adds
+# guitar/piano stems but Demucs's own docs call it out as NOT production
+# quality: its piano/guitar separation heads bleed into and steal energy from
+# the other stems — the most likely cause of a sustained instrument (sax,
+# brass, strings, anything living in "other") intermittently dropping out.
+# So: htdemucs_ft supplies vocals/drums/bass/other (the stems that matter for
+# every song), htdemucs_6s runs only as a second pass to ALSO offer guitar/
+# piano as extra, best-effort tracks — its lower-quality other/vocals/drums/
+# bass from that pass are discarded.
+DEMUCS_MODEL = "htdemucs_ft"
+DEMUCS_MODEL_EXTRA = "htdemucs_6s"
+STEM_NAMES = ["vocals", "guitar", "piano", "other", "bass", "drums"]
+# what carries into the lullaby by default when the user hasn't chosen
+DEFAULT_STEM_WEIGHTS = {"vocals": 1.0, "guitar": 1.0, "piano": 1.0, "other": 1.0,
+                        "bass": 0.0, "drums": 0.0}
+
+
+def separate_stems(wav_path: Path, stems_dir: Path) -> Path:
+    stems_dir.mkdir(parents=True, exist_ok=True)
+    run([sys.executable, "-m", "demucs.separate", "-n", DEMUCS_MODEL,
+         "-o", str(stems_dir), str(wav_path)])
+    out_dir = stems_dir / DEMUCS_MODEL / wav_path.stem
+
+    run([sys.executable, "-m", "demucs.separate", "-n", DEMUCS_MODEL_EXTRA,
+         "-o", str(stems_dir), str(wav_path)])
+    extra_dir = stems_dir / DEMUCS_MODEL_EXTRA / wav_path.stem
+    for name in ("guitar", "piano"):
+        src = extra_dir / f"{name}.wav"
+        if src.is_file():
+            shutil.copyfile(src, out_dir / f"{name}.wav")
+    shutil.rmtree(stems_dir / DEMUCS_MODEL_EXTRA, ignore_errors=True)
+    return out_dir
+
+
+REMIX_FOCUS_WEIGHTS = {
+    # legacy focus presets (the multitrack workbench passes explicit weights)
+    "both": DEFAULT_STEM_WEIGHTS,
+    "vocals": {**DEFAULT_STEM_WEIGHTS, "guitar": 0.35, "piano": 0.35, "other": 0.35},
+    "instruments": {**DEFAULT_STEM_WEIGHTS, "vocals": 0.35},
+}
+
+
+def prep_remix_input(stem_dir: Path, out_wav: Path, focus: str = "both",
+                     stem_weights: dict = None) -> Path:
+    """Build the cleanest possible input for an ACE-Step lullaby remix from the
+    USER-CHOSEN stems at their chosen levels (multitrack workbench), then: HPSS
+    harmonic component only (drops riser sweeps / cymbal swells / noise beds
+    that the model renders as ugly artifacts in buildups), de-vocalize the
+    vocal stem if present, tail trimmed at the last real musical energy with a
+    gentle fade so the model never sees the messy outro."""
+    import librosa
+    import soundfile as sf
+
+    from scipy.signal import butter, sosfiltfilt
+
+    weights = dict(stem_weights) if stem_weights else \
+        dict(REMIX_FOCUS_WEIGHTS.get(focus, REMIX_FOCUS_WEIGHTS["both"]))
+    weights = {k: min(1.5, max(0.0, float(v))) for k, v in weights.items()
+               if k in STEM_NAMES}
+    if not any(v > 0 for v in weights.values()):
+        raise RuntimeError("no stems selected — include at least one track")
+    print("   remix stems: " + ", ".join(f"{k}={v:g}" for k, v in weights.items()
+                                         if v > 0), flush=True)
+    sr = 44100
+    chans = []
+    for name, w in weights.items():
+        if w <= 0:
+            continue
+        audio, file_sr = sf.read(stem_dir / f"{name}.wav", always_2d=True)
+        if file_sr != sr:
+            raise RuntimeError(f"unexpected sample rate in {name}.wav")
+        audio = audio.astype(np.float32)
+        if name == "vocals":
+            # de-vocalize: keep the sung melody (fundamentals < ~1kHz) but strip
+            # the speech cues (consonants / sibilance / formant edge > ~3kHz)
+            # that survive ACE's regeneration as ghost-vocal artifacts — the
+            # stem becomes a soft melodic pad instead of a recognizable voice
+            sos = butter(4, 3200, btype="low", fs=sr, output="sos")
+            audio = sosfiltfilt(sos, audio, axis=0).astype(np.float32)
+        chans.append(audio * w)
+    n = max(a.shape[0] for a in chans)
+    mix = np.zeros((n, 2), dtype=np.float32)
+    for a in chans:
+        mix[: a.shape[0]] += a[:, :2] if a.shape[1] >= 2 else np.repeat(a, 2, axis=1)
+
+    # per-channel HPSS, keep harmonic only — ADAPTIVELY. Songs whose identity is
+    # transient (rapid patter vocals, staccato stabs) read as "percussive" to
+    # HPSS; a strict filter throws their melody away (measured: 23% energy
+    # retention on ensemble musical theater -> output stopped resembling the
+    # song). Relax the margin, then blend the mix back in, until enough of the
+    # song survives.
+    def hpss(margin):
+        out = np.zeros_like(mix)
+        for c in range(2):
+            out[:, c] = librosa.effects.harmonic(np.ascontiguousarray(mix[:, c]),
+                                                 margin=margin)
+        return out
+
+    e_mix = float(np.mean(mix ** 2)) + 1e-12
+    harm = hpss(3.0)
+    retention = float(np.mean(harm ** 2)) / e_mix
+    if retention < 0.45:
+        harm = hpss(1.5)
+        retention = float(np.mean(harm ** 2)) / e_mix
+        print(f"   transient-heavy song: relaxed HPSS (retention {retention:.0%})", flush=True)
+    if retention < 0.45:
+        harm = 0.5 * harm + 0.5 * mix
+        retention = float(np.mean(harm ** 2)) / e_mix
+        print(f"   still thin: blended original back (retention {retention:.0%})", flush=True)
+
+    # tail trim: last 0.5s window with real energy, +1.5s of room, 2.5s fade
+    win = sr // 2
+    mono = np.abs(harm).mean(axis=1)
+    rms = np.array([np.sqrt(np.mean(mono[i:i + win] ** 2)) for i in range(0, len(mono), win)])
+    active = np.where(rms > 0.004)[0]
+    if len(active):
+        end = min(len(harm), (active[-1] + 1) * win + int(1.5 * sr))
+        harm = harm[:end]
+        fade = min(int(2.5 * sr), len(harm))
+        harm[-fade:] *= np.linspace(1.0, 0.0, fade)[:, None]
+
+    peak = np.max(np.abs(harm)) or 1.0
+    if peak > 0.98:
+        harm = harm / peak * 0.98
+    sf.write(out_wav, harm, sr)
+    print(f"   remix input: harmonic-only, {len(harm)/sr:.0f}s", flush=True)
+    return out_wav
+
+
+def mix_non_drum_stems(stem_dir: Path, out_wav: Path) -> Path:
+    import soundfile as sf
+    parts, sr_ref = [], None
+    for name in (n for n in STEM_NAMES if n != "drums"):
+        audio, sr = sf.read(stem_dir / f"{name}.wav", always_2d=True)
+        sr_ref = sr_ref or sr
+        parts.append(audio)
+    n = max(p.shape[0] for p in parts)
+    mix = np.zeros((n, parts[0].shape[1]), dtype=np.float32)
+    for p in parts:
+        mix[: p.shape[0]] += p.astype(np.float32)
+    peak = np.max(np.abs(mix)) or 1.0
+    if peak > 0.98:
+        mix = mix / peak * 0.98
+    sf.write(out_wav, mix, sr_ref)
+    return out_wav
+
+
+# ---------------------------------------------------------------- stage 4: analysis + transcription
+
+def detect_key(chroma_mean: np.ndarray) -> tuple:
+    """(tonic_pc, 'major'|'minor') by Krumhansl-Schmuckler correlation."""
+    best = (-2.0, 0, "major")
+    for tonic in range(12):
+        rolled = np.roll(chroma_mean, -tonic)
+        for profile, mode in ((KS_MAJOR, "major"), (KS_MINOR, "minor")):
+            r = np.corrcoef(rolled, profile)[0, 1]
+            if r > best[0]:
+                best = (r, tonic, mode)
+    return best[1], best[2]
+
+
+def analyze(raw_wav: Path, stem_dir: Path, out_json: Path) -> dict:
+    """Beat grid, bar phase, key, and per-bar chords. Saved as JSON so the
+    arrange stage can be re-run instantly while tuning."""
+    import librosa
+
+    y_mix, sr = librosa.load(str(raw_wav), sr=22050, mono=True)
+    y_harm = librosa.effects.harmonic(y_mix, margin=4)
+
+    tempo, beat_frames = librosa.beat.beat_track(y=y_mix, sr=sr, trim=False)
+    tempo = float(np.atleast_1d(tempo)[0])
+    beat_times = librosa.frames_to_time(beat_frames, sr=sr).tolist()
+    # normalize half/double-time lock-ins — the BEAT GRID must move with the
+    # tempo number, or every downstream duration is off by 2x (a 152->76
+    # halving without decimating beats once produced a 14-minute lullaby)
+    while tempo > 150 and len(beat_times) > 8:
+        tempo /= 2
+        beat_times = beat_times[::2]
+    while tempo < 60:
+        tempo *= 2
+        mids = [(a + b) / 2 for a, b in zip(beat_times, beat_times[1:])]
+        merged = []
+        for b, m in zip(beat_times, mids + [None]):
+            merged.append(b)
+            if m is not None:
+                merged.append(m)
+        beat_times = merged
+    if len(beat_times) < 8:
+        raise RuntimeError("could not find a beat grid in this track")
+
+    chroma = librosa.feature.chroma_cqt(y=y_harm, sr=sr)
+    key_pc, key_mode = detect_key(chroma.mean(axis=1))
+
+    # per-beat mean chroma
+    frames = librosa.time_to_frames(beat_times, sr=sr)
+    beat_chroma = []
+    for i in range(len(frames) - 1):
+        seg = chroma[:, frames[i]:max(frames[i] + 1, frames[i + 1])]
+        beat_chroma.append(seg.mean(axis=1))
+    beat_chroma.append(beat_chroma[-1])
+    beat_chroma = np.array(beat_chroma)
+
+    # bar phase (4/4 assumed): the phase whose bar boundaries see the most
+    # harmonic change is where the chords move
+    def phase_score(ph):
+        idx = list(range(ph, len(beat_chroma) - 4, 4))
+        return sum(float(np.linalg.norm(beat_chroma[i + 4] - beat_chroma[i])) for i in idx) / max(len(idx), 1)
+    phase = int(np.argmax([phase_score(p) for p in range(4)]))
+
+    # bass-stem chroma as a root prior
+    y_bass, _ = librosa.load(str(stem_dir / "bass.wav"), sr=22050, mono=True)
+    bass_chroma = librosa.feature.chroma_cqt(y=y_bass, sr=22050)
+
+    triads = MAJOR_TRIADS if key_mode == "major" else MINOR_TRIADS
+    candidates = []
+    for deg, qual in triads:
+        root = (key_pc + deg) % 12
+        third = (root + (4 if qual == "maj" else 3)) % 12
+        fifth = (root + 7) % 12
+        tpl = np.zeros(12)
+        tpl[root], tpl[third], tpl[fifth] = 1.0, 0.8, 0.9
+        candidates.append({"root": root, "qual": qual, "tpl": tpl})
+
+    bars = []
+    prev_pick = None
+    for b0 in range(phase, len(beat_times) - 1, 4):
+        t0 = beat_times[b0]
+        t1 = beat_times[min(b0 + 4, len(beat_times) - 1)]
+        seg = beat_chroma[b0:min(b0 + 4, len(beat_chroma))].mean(axis=0)
+        f0, f1 = librosa.time_to_frames([t0, t1], sr=22050)
+        bseg = bass_chroma[:, f0:max(f0 + 1, f1)].mean(axis=1)
+        bseg = bseg / (bseg.max() + 1e-9)
+        scores = [float(seg @ c["tpl"] + 0.6 * bseg[c["root"]]) for c in candidates]
+        pick = int(np.argmax(scores))
+        # hysteresis: stay on the previous chord unless clearly beaten
+        if prev_pick is not None and scores[pick] < scores[prev_pick] * 1.08:
+            pick = prev_pick
+        prev_pick = pick
+        bars.append({"start": t0, "end": t1,
+                     "root": candidates[pick]["root"], "qual": candidates[pick]["qual"]})
+
+    info = {"tempo": tempo, "beat_times": beat_times, "bar_phase": phase,
+            "key_pc": key_pc, "key_mode": key_mode, "bars": bars}
+    out_json.write_text(json.dumps(info))
+    print(f"   key: {NOTE_NAMES[key_pc]} {key_mode}   tempo: {tempo:.0f} bpm   "
+          f"bars: {len(bars)}", flush=True)
+    return info
+
+
+def _transcribe_stem(wav: Path) -> "pretty_midi.PrettyMIDI":
+    from basic_pitch.inference import predict
+    from basic_pitch import ICASSP_2022_MODEL_PATH
+
+    _, midi_data, _ = predict(
+        str(wav),
+        model_or_model_path=ICASSP_2022_MODEL_PATH,
+        onset_threshold=0.55,
+        frame_threshold=0.35,
+        minimum_note_length=120,
+        melodia_trick=True,
+    )
+    return midi_data
+
+
+def _melody_score(midi_data) -> float:
+    """How much does this transcription look like a LEAD MELODY (vs accompaniment
+    chords, ad-libs, or silence)? Higher is better.
+
+    A real melody: covers a good share of the song, is mostly one note at a
+    time, moves stepwise more than it leaps, holds notes rather than stabbing,
+    and lives in a sane pitch band."""
+    notes = sorted((n for inst in midi_data.instruments if not inst.is_drum
+                    for n in inst.notes if 43 <= n.pitch <= 84),
+                   key=lambda n: n.start)
+    if len(notes) < 24:
+        return 0.0
+    song_end = max(n.end for n in notes)
+
+    # coverage: merged voiced time / duration
+    merged, cur = [], [notes[0].start, notes[0].end]
+    for n in notes[1:]:
+        if n.start <= cur[1] + 0.1:
+            cur[1] = max(cur[1], n.end)
+        else:
+            merged.append(cur)
+            cur = [n.start, n.end]
+    merged.append(cur)
+    coverage = sum(e - s for s, e in merged) / max(song_end, 1e-6)
+
+    # monophony: fraction of notes that don't overlap their successor
+    overlaps = sum(1 for a, b in zip(notes, notes[1:]) if b.start < a.end - 0.06)
+    mono = 1.0 - overlaps / len(notes)
+
+    # stepwise motion on the top-line reduction
+    top, last_start = [], -1.0
+    for n in notes:
+        if n.start - last_start > 0.06:
+            top.append(n.pitch)
+            last_start = n.start
+        elif top and n.pitch > top[-1]:
+            top[-1] = n.pitch
+    steps = [abs(b - a) for a, b in zip(top, top[1:])]
+    stepwise = (sum(1 for s in steps if s <= 2) / len(steps)) if steps else 0.0
+
+    med_dur = float(np.median([n.end - n.start for n in notes]))
+    iqr = float(np.percentile([n.pitch for n in notes], 75)
+                - np.percentile([n.pitch for n in notes], 25))
+
+    return (2.0 * min(coverage, 0.9)
+            + 1.5 * mono
+            + 1.5 * stepwise
+            + 1.0 * min(med_dur / 0.30, 1.0)
+            + (1.0 if 4 <= iqr <= 14 else 0.4))
+
+
+def _mix_stems(stem_dir: Path, names: tuple, out_path: Path) -> Path:
+    import soundfile as sf
+    parts, sr_ref = [], None
+    for n in names:
+        audio, sr = sf.read(stem_dir / f"{n}.wav", always_2d=True)
+        sr_ref = sr_ref or sr
+        parts.append(audio.astype(np.float32))
+    ln = max(p.shape[0] for p in parts)
+    mix = np.zeros((ln, parts[0].shape[1]), dtype=np.float32)
+    for p in parts:
+        mix[: p.shape[0]] += p
+    peak = np.max(np.abs(mix)) or 1.0
+    if peak > 0.98:
+        mix = mix / peak * 0.98
+    sf.write(out_path, mix, sr_ref)
+    return out_path
+
+
+def _mix_stems_weighted(stem_dir: Path, weights: dict, out_path: Path) -> Path:
+    import soundfile as sf
+    parts, sr_ref = [], None
+    for name, w in weights.items():
+        if w <= 0:
+            continue
+        audio, sr = sf.read(stem_dir / f"{name}.wav", always_2d=True)
+        sr_ref = sr_ref or sr
+        parts.append(audio.astype(np.float32) * w)
+    if not parts:
+        raise RuntimeError("no stems selected for melody — tick at least one track")
+    ln = max(p.shape[0] for p in parts)
+    mix = np.zeros((ln, parts[0].shape[1]), dtype=np.float32)
+    for p in parts:
+        mix[: p.shape[0]] += p
+    peak = np.max(np.abs(mix)) or 1.0
+    if peak > 0.98:
+        mix = mix / peak * 0.98
+    sf.write(out_path, mix, sr_ref)
+    return out_path
+
+
+def transcribe_melody(stem_dir: Path, out_midi: Path, source: str = "auto",
+                      stem_weights: dict = None) -> Path:
+    """Transcribe the lead melody.
+
+    stem_weights (the multitrack workbench path — the normal case now): a
+    {stem: level} dict straight from the Tracks panel. Whatever the user
+    ticked/weighted there IS the melody source, transcribed directly. No
+    further picking, no candidates, no auto-scoring.
+
+    source (legacy path, used only when stem_weights is None — plain CLI use
+    without a workbench selection): 'vocals' | 'instruments' | 'vocals_other'
+    | 'auto', where auto scores each against a melody-likeness heuristic and
+    keeps the best."""
+    work = out_midi.parent
+
+    if stem_weights:
+        weights = {k: v for k, v in stem_weights.items() if k in STEM_NAMES and v > 0}
+        print("   melody stems: " + ", ".join(f"{k}={v:g}" for k, v in weights.items()),
+              flush=True)
+        mix_path = _mix_stems_weighted(stem_dir, weights, work / "melody_mix.wav")
+        midi_data = _transcribe_stem(mix_path)
+        midi_data.write(str(out_midi))
+        return out_midi
+
+    candidates = {
+        "vocals": stem_dir / "vocals.wav",
+        "instruments": _mix_stems(stem_dir, ("guitar", "piano", "other"),
+                                  work / "instruments_bus.wav"),
+        "vocals_other": _mix_stems(stem_dir, ("vocals", "other"),
+                                   work / "vocals_other_bus.wav"),
+    }
+    if source in candidates:
+        midi_data = _transcribe_stem(candidates[source])
+        print(f"   melody source: {source} (manual)", flush=True)
+        midi_data.write(str(out_midi))
+        return out_midi
+
+    scored = {}
+    for name, wav in candidates.items():
+        md = _transcribe_stem(wav)
+        scored[name] = (_melody_score(md), md)
+        print(f"   melody candidate {name}: score {scored[name][0]:.2f}", flush=True)
+    pick = max(scored, key=lambda k: scored[k][0])
+    if scored[pick][0] <= 0.0:
+        raise RuntimeError("no melody found in vocals/instruments/vocals_other")
+    print(f"   melody source: {pick} (auto)", flush=True)
+    scored[pick][1].write(str(out_midi))
+    return out_midi
+
+
+def write_stem_previews(stem_dir: Path, work: Path, buckets: int = 200):
+    """Multitrack workbench assets: per-stem audition mp3 + peak envelope."""
+    import soundfile as sf
+    info = {}
+    for name in STEM_NAMES:
+        wav = stem_dir / f"{name}.wav"
+        if not wav.is_file():
+            continue
+        run([_ffmpeg_exe(), "-y", "-v", "quiet", "-i", str(wav),
+             "-c:a", "libmp3lame", "-b:a", "128k",
+             str(work / f"stem_{name}_preview.mp3")])
+        audio, sr = sf.read(wav, always_2d=True)
+        mono = np.abs(audio).mean(axis=1)
+        step = max(1, len(mono) // buckets)
+        peaks = [round(float(mono[i:i + step].max()), 4)
+                 for i in range(0, len(mono) - 1, step)][:buckets]
+        info[name] = {"peaks": peaks,
+                      "rms": round(float(np.sqrt(np.mean(mono ** 2))), 5)}
+    (work / "stems.json").write_text(json.dumps(info))
+    print(f"   stem previews: {', '.join(info)}", flush=True)
+
+
+def write_waveform_json(raw_wav: Path, out_json: Path, buckets: int = 600):
+    """Peak-per-bucket envelope of the song for the workbench waveform strip."""
+    import soundfile as sf
+    audio, sr = sf.read(raw_wav, always_2d=True)
+    mono = np.abs(audio).mean(axis=1)
+    step = max(1, len(mono) // buckets)
+    peaks = [round(float(mono[i:i + step].max()), 4)
+             for i in range(0, len(mono) - 1, step)][:buckets]
+    out_json.write_text(json.dumps({"duration": len(mono) / sr, "peaks": peaks}))
+
+
+# ---------------------------------------------------------------- stage 5: arrangement
+
+def _clean_melody(raw_midi: Path, info: dict) -> list:
+    """-> [(eighth_index, pitch, n_eighths)] on the source-song eighth grid."""
+    beat_times = info["beat_times"]
+    scale = MAJOR_SCALE if info["key_mode"] == "major" else MINOR_SCALE
+    scale_pcs = {(info["key_pc"] + d) % 12 for d in scale}
+
+    # eighth-note grid over the source timeline
+    grid = []
+    for i in range(len(beat_times) - 1):
+        grid.append(beat_times[i])
+        grid.append((beat_times[i] + beat_times[i + 1]) / 2)
+    grid.append(beat_times[-1])
+    grid = np.array(grid)
+
+    def to_grid(t):
+        return int(np.argmin(np.abs(grid - t)))
+
+    src = pretty_midi.PrettyMIDI(str(raw_midi))
+    notes = sorted((n for inst in src.instruments if not inst.is_drum
+                    for n in inst.notes if 43 <= n.pitch <= 84),
+                   key=lambda n: (n.start, -(n.end - n.start)))
+    if not notes:
+        return []
+    span = max(n.end for n in notes) - notes[0].start
+
+    # dense polyphonic sources (instrument stems: chords, arpeggios, doublings)
+    # need real lead-line extraction, not just overlap pruning — otherwise the
+    # accompaniment becomes "extra key presses that make no sense"
+    if len(notes) / max(span, 1.0) > 3.5:
+        med_dur = float(np.median([n.end - n.start for n in notes]))
+        clusters, cur = [], [notes[0]]
+        for n in notes[1:]:
+            if n.start - cur[-1].start < 0.08:
+                cur.append(n)          # same strum/chord/arp onset
+            else:
+                clusters.append(cur)
+                cur = [n]
+        clusters.append(cur)
+        skyline, register = [], None
+        for cl in clusters:
+            def salience(n):
+                s = (n.end - n.start) / med_dur + 0.02 * n.pitch
+                if register is not None:
+                    s -= abs(n.pitch - register) / 6.0   # stay near the melody's register
+                return s
+            best = max(cl, key=salience)
+            if best.end - best.start < 0.5 * med_dur:
+                continue               # short stab, not melody
+            skyline.append(best)
+            register = best.pitch if register is None else 0.7 * register + 0.3 * best.pitch
+        if len(skyline) >= 24:
+            notes = skyline
+
+    # monophony: drop notes fully inside the previous kept note (unless much longer)
+    kept = []
+    for n in notes:
+        if kept and n.start < kept[-1].end - 0.06:
+            if n.end - n.start > 1.8 * (kept[-1].end - kept[-1].start):
+                kept[-1] = n
+            continue
+        kept.append(n)
+
+    # ghost-note filter: a short note leaping far from BOTH neighbours is
+    # transcription junk, not melody
+    kept = [n for i, n in enumerate(kept)
+            if not (0 < i < len(kept) - 1
+                    and abs(n.pitch - kept[i - 1].pitch) > 9
+                    and abs(n.pitch - kept[i + 1].pitch) > 9
+                    and (n.end - n.start) < 0.3)]
+
+    # octave-jump repair against a running median
+    pitches = []
+    for n in kept:
+        p = n.pitch
+        if len(pitches) >= 3:
+            med = float(np.median(pitches[-5:]))
+            for shift in (-12, 12):
+                if abs(p + shift - med) + 4 < abs(p - med):
+                    p += shift
+                    break
+        pitches.append(p)
+
+    # scale snap + grid quantize
+    out = []
+    for n, p in zip(kept, pitches):
+        if p % 12 not in scale_pcs:
+            up, down = p + 1, p - 1
+            p = up if up % 12 in scale_pcs else (down if down % 12 in scale_pcs else p)
+        g0, g1 = to_grid(n.start), to_grid(n.end)
+        if g1 <= g0:
+            g1 = g0 + 1
+        if out and out[-1][0] == g0:
+            continue
+        out.append([g0, int(p), g1 - g0])
+
+    # legato: extend each note to the next onset (capped at 2 bars = 16 eighths)
+    for i in range(len(out) - 1):
+        gap = out[i + 1][0] - out[i][0]
+        out[i][2] = min(max(out[i][2], gap), 16)
+
+    # register: put the melody's median around G4 (67)
+    if out:
+        med = float(np.median([p for _, p, _ in out]))
+        shift = int(round((67 - med) / 12)) * 12
+        out = [[g, p + shift, d] for g, p, d in out]
+    return out
+
+
+def _phrases(melody: list) -> list:
+    """Split into phrases at gaps >= 4 eighths (half a bar of silence)."""
+    phrases, cur = [], []
+    for note in melody:
+        if cur and note[0] - (cur[-1][0] + cur[-1][2]) >= 4:
+            phrases.append(cur)
+            cur = []
+        cur.append(note)
+    if cur:
+        phrases.append(cur)
+    return phrases
+
+
+def humanize_part(inst, rng, *, spread: float = 0.0, drift_ms: float = 0.0,
+                  expression: bool = False):
+    """Make a rendered part sound played rather than stamped.
+
+    Ported from composerkit's realism pass, which measurably cut "sounds like
+    MIDI" on the Composer tab. Three things matter here:
+
+      spread     — voices of a chord entering together on the exact same
+                   millisecond is the loudest artificial tell there is. The
+                   string pad was built with jitter=0.0, so every note of every
+                   chord landed on the same sample. Real players don't.
+      drift      — a slow correlated wander reads as a human keeping time;
+                   independent per-note noise (what add()'s uniform jitter did)
+                   reads as unsteadiness.
+      expression — CC11 within each held note. FluidR3 responds to it (verified:
+                   a swelled note renders 0.05 -> 0.13 where a flat one sits at
+                   0.17), and a dead-flat sustained pad is the other big tell.
+
+    Everything is in SECONDS, so the feel doesn't change with tempo.
+    """
+    if not inst.notes:
+        return
+    notes = sorted(inst.notes, key=lambda n: (n.start, n.pitch))
+
+    if spread > 0:
+        groups = {}
+        for n in notes:
+            groups.setdefault(round(n.start, 3), []).append(n)
+        for _t, grp in groups.items():
+            if len(grp) < 2:
+                continue
+            order = sorted(grp, key=lambda n: rng.random())
+            for k, n in enumerate(order):
+                off = rng.uniform(0.0, spread)
+                n.start += off
+                n.velocity = max(1, min(127, int(n.velocity * (1.0 - 0.05 * k))))
+
+    if drift_ms > 0:
+        sigma, cap = drift_ms / 1000.0, 2.5 * drift_ms / 1000.0
+        d = 0.0
+        for n in notes:
+            d = max(-cap, min(cap, d * 0.82 + rng.gauss(0.0, sigma)))
+            n.start = max(0.0, n.start + d)
+            n.end = max(n.start + 0.05, n.end + d)
+
+    if expression:
+        # one curve per chord entry: soft in, grow into the body, ease off
+        starts = sorted({round(n.start, 3) for n in notes})
+        for i, t0 in enumerate(starts):
+            grp = [n for n in notes if abs(n.start - t0) < 0.05]
+            if not grp:
+                continue
+            t1 = starts[i + 1] if i + 1 < len(starts) else max(n.end for n in grp)
+            span = max(0.25, min(max(n.end for n in grp) - t0, t1 - t0))
+            peak = 0.70 + 0.30 * (max(n.velocity for n in grp) / 127.0)
+            for k in range(7):
+                f = k / 6.0
+                val = (0.36 + (peak - 0.36) * (f / 0.4) if f < 0.4
+                       else peak - (peak * 0.22) * ((f - 0.4) / 0.6))
+                inst.control_changes.append(pretty_midi.ControlChange(
+                    11, int(max(8, min(127, val * 127))), t0 + f * span))
+
+
+def arrange(raw_midi: Path, info: dict, out_piano: Path, out_layers: Path,
+            tempo_scale: float = 0.72, celesta: bool = True, pad: bool = True,
+            clamp_bpm: bool = True, humanize: bool = True) -> float:
+    """Build the lullaby on a clean output grid. Returns output bpm.
+
+    clamp_bpm=False skips the 55-88bpm clamp, keeping out_bpm a literal
+    tempo_scale multiple of the source tempo instead — used when this runs
+    alongside the melody-match engine in a hybrid render (Melody Match tab)
+    so the two tracks' timelines scale by the same factor rather than
+    drifting apart over a long song (melody-match's timeline is a plain
+    linear stretch by tempo_scale; the clamp exists only for the standalone
+    Piano engine's own "true lullaby tempo" target)."""
+    rng = np.random.default_rng(7)
+    out_bpm = info["tempo"] * tempo_scale
+    if clamp_bpm:
+        out_bpm = float(np.clip(out_bpm, 55, 88))
+    e = 60.0 / out_bpm / 2          # seconds per eighth note at the output tempo
+    bar_len = 8                      # eighths per 4/4 bar
+
+    melody = _clean_melody(raw_midi, info)
+    if not melody:
+        raise RuntimeError("no melody could be transcribed from this track")
+
+    # map source bars onto the output eighth grid
+    beat_times = np.array(info["beat_times"])
+    phase = info["bar_phase"]
+
+    def src_time_to_eighth(t):
+        b = int(np.searchsorted(beat_times, t)) - 1
+        b = max(0, min(b, len(beat_times) - 2))
+        frac = (t - beat_times[b]) / max(beat_times[b + 1] - beat_times[b], 1e-6)
+        return (b - phase) * 2 + frac * 2
+
+    bars = []
+    for bar in info["bars"]:
+        g0 = int(round(src_time_to_eighth(bar["start"])))
+        bars.append({"g0": g0, "root": bar["root"], "qual": bar["qual"]})
+
+    intro_e = bar_len                # one bar of accompaniment before the song
+    total_e = max(m[0] + m[2] for m in melody) + intro_e + 2 * bar_len
+
+    pm = pretty_midi.PrettyMIDI(initial_tempo=out_bpm)
+    piano = pretty_midi.Instrument(program=PROG_PIANO, name="piano")
+    box = pretty_midi.Instrument(program=PROG_MUSIC_BOX, name="music box")
+    strings = pretty_midi.Instrument(program=PROG_STRINGS, name="pad")
+
+    def add(inst, pitch, g_start, g_len, vel, jitter=0.012):
+        t0 = (g_start + intro_e) * e + float(rng.uniform(-jitter, jitter))
+        t0 = max(0.0, t0)
+        inst.notes.append(pretty_midi.Note(velocity=int(vel), pitch=int(pitch),
+                                           start=t0, end=t0 + g_len * e + 0.06))
+
+    # ---- accompaniment: rocking broken chord (R 5 10 5 | 3' 5 10 5) per bar ----
+    def chord_tones(root_pc, qual):
+        root = 36 + ((root_pc - 0) % 12)          # C2..B2 register
+        if root > 45:
+            root -= 12
+        third = root + (4 if qual == "maj" else 3)
+        return root, third, root + 7, third + 12   # root, third, fifth, tenth
+
+    last_g = -1
+    for bi, bar in enumerate(bars):
+        g0 = bar["g0"]
+        if g0 <= last_g or g0 < -bar_len or g0 > total_e:
+            continue
+        last_g = g0
+        r, t3, f5, t10 = chord_tones(bar["root"], bar["qual"])
+        pattern = [r, f5, t10, f5, t3 + 12, f5, t10, f5]
+        for k, pitch in enumerate(pattern):
+            vel = 40 + (4 if k == 0 else 0) + int(rng.integers(-3, 4))
+            add(piano, pitch, g0 + k, 2, vel)      # each arp note rings 2 eighths
+        # sustain pedal per bar
+        t_dn = (g0 + intro_e) * e + 0.01
+        t_up = (g0 + intro_e + bar_len) * e - 0.04
+        piano.control_changes.append(pretty_midi.ControlChange(64, 100, max(0, t_dn)))
+        piano.control_changes.append(pretty_midi.ControlChange(64, 0, max(0, t_up)))
+        if pad:
+            for pitch, vel in ((r + 12, 25), (f5 + 12, 22), (t3 + 12, 20)):
+                add(strings, pitch, g0, bar_len, vel, jitter=0.0)
+
+    # intro bar: first chord's pattern, softer
+    if bars:
+        r, t3, f5, t10 = chord_tones(bars[0]["root"], bars[0]["qual"])
+        for k, pitch in enumerate([r, f5, t10, f5, t3 + 12, f5, t10, f5]):
+            add(piano, pitch, k - intro_e, 2, 32 + int(rng.integers(-2, 3)))
+
+    # ---- melody: phrase-shaped velocities, music-box doubling ----
+    for phrase in _phrases(melody):
+        n = len(phrase)
+        for i, (g0, pitch, d) in enumerate(phrase):
+            arch = np.sin(np.pi * (i / max(n - 1, 1))) if n > 1 else 0.6
+            vel = int(54 + 16 * arch + rng.integers(-3, 4))
+            add(piano, pitch, g0, d, vel)
+            if celesta:
+                add(box, pitch + 12, g0, min(d, 8), max(24, vel - 26), jitter=0.02)
+
+    # ---- ending: gentle I chord ----
+    if bars:
+        tonic = info["key_pc"]
+        qual = "maj" if info["key_mode"] == "major" else "min"
+        r, t3, f5, t10 = chord_tones(tonic, qual)
+        g_end = last_g + bar_len
+        for pitch, vel in ((r, 40), (f5, 34), (t3 + 12, 32), (r + 24, 30)):
+            add(piano, pitch, g_end, bar_len * 2, vel, jitter=0.03)
+        t_dn = (g_end + intro_e) * e
+        piano.control_changes.append(pretty_midi.ControlChange(64, 100, t_dn))
+
+    if humanize:
+        # A lullaby lives or dies on feel, so this matters more here than
+        # anywhere: the piano gets a gentle wander and a hand-roll on its
+        # chords, the string pad gets a proper ragged ensemble entry plus
+        # within-note swell (it was previously jitter=0.0 and dead flat), and
+        # the music box gets the lightest touch since it's a struck sound.
+        hr = np.random.default_rng(11)
+
+        class _R:                      # tiny shim: pretty_midi wants python rng
+            random = staticmethod(lambda: float(hr.random()))
+            uniform = staticmethod(lambda a, b: float(hr.uniform(a, b)))
+            gauss = staticmethod(lambda m, s: float(hr.normal(m, s)))
+        humanize_part(piano, _R, spread=0.012, drift_ms=5.0)
+        if pad:
+            humanize_part(strings, _R, spread=0.045, drift_ms=7.0, expression=True)
+        if celesta:
+            humanize_part(box, _R, spread=0.006, drift_ms=4.0)
+
+    pm.instruments.append(piano)
+    pm.write(str(out_piano))
+
+    pm2 = pretty_midi.PrettyMIDI(initial_tempo=out_bpm)
+    if celesta and box.notes:
+        pm2.instruments.append(box)
+    if pad and strings.notes:
+        pm2.instruments.append(strings)
+    if pm2.instruments:
+        pm2.write(str(out_layers))
+    elif out_layers.exists():
+        out_layers.unlink()
+
+    print(f"   out tempo: {out_bpm:.0f} bpm   melody notes: {len(melody)}   "
+          f"piano notes: {len(piano.notes)}", flush=True)
+    return out_bpm
+
+
+# ---------------------------------------------------------------- melody-match engine
+def _hz_to_midi(f0: np.ndarray) -> np.ndarray:
+    out = np.zeros_like(f0)
+    voiced = f0 > 0
+    out[voiced] = 69 + 12 * np.log2(f0[voiced] / 440.0)
+    return out
+
+
+def extract_f0_curve(wav_path: Path, f0_min: float = 65, f0_max: float = 1100):
+    """Continuous per-~10ms pitch + loudness curve via FCPE — the melody-match
+    engine's source of truth, in place of basic-pitch's quantized transcription."""
+    import soundfile as sf
+    import torch
+    try:
+        from torchfcpe import spawn_bundled_infer_model
+    except ImportError:
+        raise RuntimeError("melody-match needs torchfcpe: "
+                           "'.venv\\Scripts\\python.exe -m pip install torchfcpe'")
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model = spawn_bundled_infer_model(device=device)
+    audio, sr = sf.read(str(wav_path), always_2d=True)
+    mono = audio.mean(axis=1).astype(np.float32)
+    t = torch.from_numpy(mono).float().to(device).unsqueeze(0).unsqueeze(-1)
+    f0 = model.infer(t, sr=sr, decoder_mode="local_argmax", threshold=0.006,
+                      f0_min=f0_min, f0_max=f0_max)
+    f0 = f0.squeeze().cpu().numpy()
+    hop = len(mono) / sr / len(f0)
+
+    hop_samples = int(round(hop * sr))
+    rms = np.zeros(len(f0), dtype=np.float32)
+    for i in range(len(f0)):
+        s, e = i * hop_samples, min(len(mono), i * hop_samples + hop_samples)
+        if e > s:
+            rms[i] = np.sqrt(np.mean(mono[s:e] ** 2))
+    return f0, rms, hop
+
+
+def _voiced_segments(f0_midi: np.ndarray, hop: float,
+                     merge_gap_s: float = 0.08, min_note_s: float = 0.05) -> list:
+    """Contiguous voiced runs, bridging short unvoiced gaps (consonants,
+    breaths) so brief dropouts don't retrigger a new note mid-phrase."""
+    n = len(f0_midi)
+    voiced = f0_midi > 0
+    merge_gap_frames = max(1, int(round(merge_gap_s / hop)))
+    bridged = voiced.copy()
+    i = 0
+    while i < n:
+        if not voiced[i]:
+            j = i
+            while j < n and not voiced[j]:
+                j += 1
+            if (j - i) <= merge_gap_frames and i > 0 and j < n:
+                bridged[i:j] = True
+            i = j
+        else:
+            i += 1
+    segments = []
+    i = 0
+    while i < n:
+        if bridged[i]:
+            j = i
+            while j < n and bridged[j]:
+                j += 1
+            if (j - i) * hop >= min_note_s:
+                segments.append((i, j))
+            i = j
+        else:
+            i += 1
+    return segments
+
+
+def _fill_gaps(f0_midi: np.ndarray, s: int, e: int) -> np.ndarray:
+    """Bridged (unvoiced) frames inside a segment get linearly interpolated
+    pitch from the surrounding voiced frames instead of a 0 dropout."""
+    seg = f0_midi[s:e].copy()
+    idx = np.arange(len(seg))
+    voiced_idx = idx[seg > 0]
+    if len(voiced_idx) == 0:
+        return seg
+    return np.interp(idx, voiced_idx, seg[voiced_idx])
+
+
+def _segment_notes(pitch_curve: np.ndarray, hop: float,
+                   min_note_s: float = 0.08, smooth_s: float = 0.08) -> list:
+    """Split one continuous (gap-filled) pitch curve into distinct sung
+    NOTES, rather than treating the whole curve as a single pitch-bent tone
+    — a phrase-long glide sounds like a siren/theremin wail, not a melody.
+
+    A rolling median (smooth_s wide) absorbs vibrato/jitter before rounding
+    to the nearest semitone, then consecutive same-semitone frames become one
+    run; any run shorter than min_note_s (a vibrato wobble that briefly
+    crossed a semitone boundary, or transcription noise) is merged into
+    whichever neighboring run is closer in pitch. Returns [(start, end,
+    base_pitch)] — base_pitch is the median of the RAW curve over that span,
+    so the note itself still carries its true tuning, only the boundaries
+    are decided from the smoothed version."""
+    n = len(pitch_curve)
+    if n == 0:
+        return []
+    win = max(1, int(round(smooth_s / hop)))
+    smoothed = np.empty(n)
+    for i in range(n):
+        lo, hi = max(0, i - win), min(n, i + win + 1)
+        smoothed[i] = np.median(pitch_curve[lo:hi])
+    rounded = np.round(smoothed).astype(int)
+
+    runs = []
+    i = 0
+    while i < n:
+        j = i
+        while j < n and rounded[j] == rounded[i]:
+            j += 1
+        runs.append([i, j, rounded[i]])
+        i = j
+
+    min_frames = max(1, int(round(min_note_s / hop)))
+    changed = True
+    while changed and len(runs) > 1:
+        changed = False
+        for k, (s, e, p) in enumerate(runs):
+            if (e - s) < min_frames:
+                left = runs[k - 1] if k > 0 else None
+                right = runs[k + 1] if k + 1 < len(runs) else None
+                if left and (not right or abs(p - left[2]) <= abs(p - right[2])):
+                    left[1] = e
+                elif right:
+                    right[0] = s
+                else:
+                    break
+                del runs[k]
+                changed = True
+                break
+
+    return [(s, e, int(np.clip(round(float(np.median(pitch_curve[s:e]))), 1, 126)))
+            for s, e, _ in runs]
+
+
+def build_melody_match_midi(f0_midi: np.ndarray, rms: np.ndarray, hop: float,
+                            out_midi: Path, program: int, tempo_scale: float = 1.0,
+                            bend_range: int = BEND_RANGE_SEMITONES) -> int:
+    """MIDI tracing the actual sung notes (no scale-snap, no rhythm grid) —
+    phrases are split into distinct notes by _segment_notes, each with its
+    own note-on/off, and only the small residual deviation within a note
+    (vibrato, slight scoop) is carried as pitch-bend. tempo_scale stretches
+    time only (pitch is untouched); <1.0 slows the piece, matching the
+    arranged engine's slider."""
+    phrases = _voiced_segments(f0_midi, hop)
+    ticks_per_beat = 960
+    tempo_us = 500000  # fixed 120bpm clock, used only as the tick<->seconds basis
+    ticks_per_sec = ticks_per_beat / (tempo_us / 1e6)
+
+    mid = mido.MidiFile(ticks_per_beat=ticks_per_beat)
+    track = mido.MidiTrack()
+    mid.tracks.append(track)
+    track.append(mido.MetaMessage("set_tempo", tempo=tempo_us, time=0))
+    track.append(mido.Message("program_change", program=program, channel=0, time=0))
+    for cc, val in ((101, 0), (100, 0), (6, bend_range), (38, 0)):  # RPN 0: bend range
+        track.append(mido.Message("control_change", control=cc, value=val, channel=0, time=0))
+
+    rms_max = max(float(rms.max()), 1e-6)
+    events = []
+    n_notes = 0
+    for ps, pe in phrases:
+        phrase_pitch = _fill_gaps(f0_midi, ps, pe)
+        for ns, ne, base in _segment_notes(phrase_pitch, hop):
+            s, e = ps + ns, ps + ne
+            n_notes += 1
+            vel = int(np.clip(30 + 90 * (rms[s:e].mean() / rms_max), 30, 110))
+            events.append((s * hop, mido.Message("note_on", note=base, velocity=vel, channel=0)))
+            for k in range(s, e):
+                frac = phrase_pitch[k - ps] - base
+                bend = int(np.clip(frac / bend_range, -1, 1) * 8191)
+                expr = int(np.clip(30 + 97 * (rms[k] / rms_max), 0, 127))
+                t = k * hop
+                events.append((t, mido.Message("pitchwheel", pitch=bend, channel=0)))
+                events.append((t, mido.Message("control_change", control=11, value=expr, channel=0)))
+            events.append((e * hop, mido.Message("note_off", note=base, velocity=0, channel=0)))
+
+    events.sort(key=lambda x: x[0])
+    last_tick = 0
+    for t_sec, msg in events:
+        tick = int(round((t_sec / max(tempo_scale, 0.01)) * ticks_per_sec))
+        msg.time = max(0, tick - last_tick)
+        track.append(msg)
+        last_tick = tick
+    track.append(mido.MetaMessage("end_of_track", time=0))
+    mid.save(str(out_midi))
+    return n_notes
+
+
+def render_melody_match(stem_dir: Path, work: Path, out_base: Path,
+                        analysis_json: Path = None, solo_weights: dict = None,
+                        arranged_weights: dict = None, instrument: str = "cello",
+                        tempo_scale: float = 0.85, celesta: bool = True,
+                        pad: bool = True) -> list:
+    """Melody Match end to end — and, unlike the other two engines, able to
+    route DIFFERENT stems to DIFFERENT treatments in one render rather than
+    forcing everything selected through the same pipeline:
+
+    solo_weights stems are mixed together and traced with continuous F0
+    (FCPE, no scale-snap) onto a single portamento-capable instrument —
+    for whichever stem you want the exact melody preserved from (typically
+    vocals). arranged_weights stems instead go through the Piano engine's own
+    transcribe+arrange pipeline (quantized to a scale/eighth-grid, rebuilt as
+    a full piano+music-box arrangement) — for a track you'd rather hear as a
+    proper backing arrangement than a literal pitch trace (e.g. an existing
+    piano/guitar part in the song). Whichever of the two are used get mixed
+    together before mastering. Returns [mp3_path, wav_path]."""
+    parts = []
+
+    if solo_weights and any(v > 0 for v in solo_weights.values()):
+        program = CONTINUOUS_INSTRUMENTS.get(instrument, CONTINUOUS_INSTRUMENTS["cello"])
+        mix_path = _mix_stems_weighted(stem_dir, solo_weights, work / "melody_match_mix.wav")
+        f0, rms, hop = extract_f0_curve(mix_path)
+        f0_midi = _hz_to_midi(f0)
+        midi_path = work / "melody_match.mid"
+        n_notes = build_melody_match_midi(f0_midi, rms, hop, midi_path, program, tempo_scale)
+        solo_wav = work / "melody_match_raw.wav"
+        sf_choice = piano_soundfont() if instrument == "music_box" else SF_FLUIDR3
+        render_midi(midi_path, solo_wav, sf_choice, gain=0.6)
+        print(f"   melody-match: {instrument} (GM program {program}), {n_notes} notes, "
+              f"tempo x{tempo_scale:g}", flush=True)
+        parts.append(solo_wav)
+
+    if arranged_weights and any(v > 0 for v in arranged_weights.values()):
+        if not analysis_json or not analysis_json.is_file():
+            raise RuntimeError("arranged-stems needs the song analyzed first (no analysis.json)")
+        info = json.loads(analysis_json.read_text())
+        melody_midi = work / "melody.mid"
+        transcribe_melody(stem_dir, melody_midi, stem_weights=arranged_weights)
+        piano_midi, layers_midi = work / "piano.mid", work / "layers.mid"
+        # clamp_bpm=False: keep this in the same linear tempo_scale as the
+        # melody-match track above, so the two don't drift apart over the song
+        arrange(melody_midi, info, piano_midi, layers_midi, tempo_scale=tempo_scale,
+               celesta=celesta, pad=pad, clamp_bpm=False)
+        piano_wav = work / "piano.wav"
+        render_midi(piano_midi, piano_wav, piano_soundfont(), gain=0.55)
+        parts.append(piano_wav)
+        if layers_midi.exists():
+            layers_wav = work / "layers.wav"
+            render_midi(layers_midi, layers_wav, SF_FLUIDR3, gain=0.45)
+            parts.append(layers_wav)
+        print("   arranged: piano+music-box render added", flush=True)
+
+    if not parts:
+        raise RuntimeError("no stems routed to either engine — tick at least one track")
+
+    if len(parts) == 1:
+        premix = parts[0]
+    else:
+        premix = work / "hybrid_premix.wav"
+        inputs = []
+        for p in parts:
+            inputs += ["-i", str(p)]
+        filt = "".join(f"[{i}:a]" for i in range(len(parts))) + f"amix=inputs={len(parts)}:normalize=0"
+        run([_ffmpeg_exe(), "-y", *inputs, "-filter_complex", filt, "-ar", "44100", str(premix)])
+
+    wav_path = out_base.with_suffix(".wav")
+    master(premix, None, wav_path)
+    mp3_path = out_base.with_suffix(".mp3")
+    run([_ffmpeg_exe(), "-y", "-i", str(wav_path), "-codec:a", "libmp3lame",
+         "-b:a", "192k", str(mp3_path)])
+    return [mp3_path, wav_path]
+
+
+# ---------------------------------------------------------------- stage 6: render + master
+
+REVERB = ["-o", "synth.reverb.active=1", "-o", "synth.reverb.room-size=0.78",
+          "-o", "synth.reverb.damp=0.25", "-o", "synth.reverb.width=0.9",
+          "-o", "synth.reverb.level=0.72", "-o", "synth.chorus.active=0"]
+
+
+def render_midi(midi_path: Path, wav_path: Path, soundfont: Path,
+                gain: float, sr: int = 44100) -> Path:
+    run([str(FLUIDSYNTH), "-ni", *REVERB, "-F", str(wav_path), "-r", str(sr),
+         "-g", str(gain), str(soundfont), str(midi_path)])
+    return wav_path
+
+
+def master(piano_wav: Path, layers_wav, out_path: Path, fade_in: float = 3.0,
+           fade_out: float = 7.0) -> Path:
+    ff = _ffmpeg_exe()
+    probe = subprocess.run(
+        [_ffmpeg_exe("ffprobe"), "-v", "quiet", "-show_entries", "format=duration",
+         "-of", "default=noprint_wrappers=1:nokey=1", str(piano_wav)],
+        check=True, capture_output=True, text=True)
+    duration = float(probe.stdout.strip())
+    fade_start = max(0.0, duration - fade_out)
+
+    chain = (
+        "highshelf=f=6500:g=-3.5,"
+        "lowshelf=f=170:g=1.5,"
+        "lowpass=f=11000,"
+        "acompressor=threshold=0.06:ratio=2:attack=40:release=400:makeup=1.5,"
+        "loudnorm=I=-16:TP=-1.5:LRA=9,"
+        f"afade=t=in:d={fade_in},afade=t=out:st={fade_start}:d={fade_out}:curve=exp"
+    )
+    if layers_wav and Path(layers_wav).is_file():
+        run([ff, "-y", "-i", str(piano_wav), "-i", str(layers_wav),
+             "-filter_complex",
+             f"[1:a]volume=0.5[l];[0:a][l]amix=inputs=2:normalize=0,{chain}",
+             "-ar", "44100", str(out_path)])
+    else:
+        run([ff, "-y", "-i", str(piano_wav), "-af", chain, "-ar", "44100", str(out_path)])
+    return out_path
+
+
+# ---------------------------------------------------------------- main
+
+STAGES = ["extract", "separate", "mix", "transcribe", "arrange", "render"]
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("input", type=Path)
+    ap.add_argument("--tempo-scale", type=float, default=0.72,
+                     help="<1.0 slows the piece (output clamped to 55-88 bpm)")
+    ap.add_argument("--out", type=Path, default=None)
+    ap.add_argument("--from-stage", choices=STAGES, default="extract")
+    ap.add_argument("--until-stage", choices=STAGES, default="render",
+                     help="stop after this stage (e.g. 'mix' when another engine "
+                          "consumes the drum-free stem mix)")
+    ap.add_argument("--remix-prep", action="store_true",
+                     help="also write remix_input.wav during the mix stage "
+                          "(vocals+other, harmonic-only, tail-trimmed) for the "
+                          "ACE-Step remix engine")
+    ap.add_argument("--melody-source",
+                     choices=["auto", "vocals", "instruments", "vocals_other"],
+                     default="auto",
+                     help="legacy: which stem(s) carry the tune when no "
+                          "--melody-stems selection is given (plain CLI use)")
+    ap.add_argument("--melody-stems", default=None,
+                     help="JSON dict of per-stem levels from the multitrack "
+                          "workbench Tracks panel, e.g. "
+                          "'{\"vocals\":1,\"other\":1,\"guitar\":0}' — the "
+                          "melody is transcribed directly from this mix, no "
+                          "further picking. Overrides --melody-source.")
+    ap.add_argument("--analysis-extras", action="store_true",
+                     help="workbench analyze phase: write the waveform envelope "
+                          "and per-stem preview/audio-level JSON for the "
+                          "multitrack Tracks panel")
+    ap.add_argument("--remix-focus", choices=["both", "vocals", "instruments"],
+                     default="both",
+                     help="with --remix-prep: which stems dominate the remix "
+                          "input (the other is attenuated, not removed)")
+    ap.add_argument("--stem-weights", default=None,
+                     help="with --remix-prep: JSON dict of per-stem levels from "
+                          "the multitrack workbench, e.g. "
+                          "'{\"vocals\":1,\"piano\":1,\"bass\":0}' — overrides "
+                          "--remix-focus")
+    ap.add_argument("--no-celesta", action="store_true", help="skip the music-box layer")
+    ap.add_argument("--no-pad", action="store_true", help="skip the soft string pad")
+    ap.add_argument("--no-humanize", action="store_true",
+                     help="skip the performance pass (chord spread, correlated "
+                          "timing drift, CC11 swells) and render the raw "
+                          "quantized arrangement — for A/B comparison")
+    ap.add_argument("--engine", choices=["arranged", "melody-match"], default="arranged",
+                     help="'arranged' (default): transcribe+quantize+rebuild as a full "
+                          "piano arrangement. 'melody-match': trace the actual continuous "
+                          "pitch curve (FCPE) on a single portamento-capable instrument — "
+                          "no scale-snap or grid quantization, closest to the sung tune.")
+    ap.add_argument("--continuous-instrument", choices=list(CONTINUOUS_INSTRUMENTS),
+                     default="cello", help="melody-match engine instrument")
+    ap.add_argument("--arranged-stems", default=None,
+                     help="melody-match engine only: JSON dict of per-stem levels to ALSO "
+                          "run through the arranged (transcribe+quantize+piano) pipeline and "
+                          "mix in — e.g. trace vocals on cello via --melody-stems while an "
+                          "existing piano part is rebuilt as a full arrangement via this flag, "
+                          "instead of forcing every ticked stem through the same engine")
+    args = ap.parse_args()
+
+    if not FLUIDSYNTH.exists():
+        sys.exit(f"FluidSynth not found at {FLUIDSYNTH}")
+
+    WORK.mkdir(exist_ok=True)
+    OUTPUT.mkdir(exist_ok=True)
+    work = WORK / args.input.stem
+    work.mkdir(parents=True, exist_ok=True)
+
+    raw_wav = work / "raw.wav"
+    stem_dir = work / "stems" / DEMUCS_MODEL / "raw"
+    mix_wav = work / "no_drums.wav"
+    melody_midi = work / "melody.mid"
+    analysis_json = work / "analysis.json"
+    piano_midi = work / "piano.mid"
+    layers_midi = work / "layers.mid"
+    piano_wav = work / "piano.wav"
+    layers_wav = work / "layers.wav"
+
+    start = STAGES.index(args.from_stage)
+    until = STAGES.index(args.until_stage)
+
+    def stop_after(stage):
+        if until <= STAGES.index(stage):
+            print(f"\nStopped after stage: {stage}", flush=True)
+            sys.exit(0)
+
+    if start <= STAGES.index("extract"):
+        print("== 1/6 extracting audio ==", flush=True)
+        extract_audio(args.input, raw_wav)
+    stop_after("extract")
+
+    if start <= STAGES.index("separate"):
+        # separation is expensive (two Demucs passes) and its result depends
+        # only on the audio, not on any downstream choice — safe to skip if a
+        # previous run (from either the Lullaby tab or the Track Splitter tab;
+        # they share this same work-dir cache by song name) already has it
+        if all((stem_dir / f"{s}.wav").is_file() for s in STEM_NAMES):
+            print("== 2/6 stems already separated (cached) ==", flush=True)
+        else:
+            print("== 2/6 separating stems (demucs) ==", flush=True)
+            separate_stems(raw_wav, work / "stems")
+    stop_after("separate")
+
+    if start <= STAGES.index("mix"):
+        print("== 3/6 mixing non-drum stems ==", flush=True)
+        mix_non_drum_stems(stem_dir, mix_wav)
+        if args.remix_prep:
+            weights = json.loads(args.stem_weights) if args.stem_weights else None
+            prep_remix_input(stem_dir, work / "remix_input.wav",
+                             focus=args.remix_focus, stem_weights=weights)
+    stop_after("mix")
+
+    if args.engine == "melody-match":
+        print("== 4/6 tracking pitch (FCPE) + rendering "
+              f"{args.continuous_instrument} ==", flush=True)
+        solo_weights = json.loads(args.melody_stems) if args.melody_stems else DEFAULT_STEM_WEIGHTS
+        arranged_weights = json.loads(args.arranged_stems) if args.arranged_stems else None
+        out_base = args.out or (OUTPUT / f"{args.input.stem}_lullaby")
+        out_base.parent.mkdir(parents=True, exist_ok=True)
+        final = render_melody_match(stem_dir, work, out_base, analysis_json=analysis_json,
+                                    solo_weights=solo_weights, arranged_weights=arranged_weights,
+                                    instrument=args.continuous_instrument,
+                                    tempo_scale=args.tempo_scale,
+                                    celesta=not args.no_celesta, pad=not args.no_pad)
+        print(f"\nDone: {final}", flush=True)
+        return
+
+    if start <= STAGES.index("transcribe"):
+        # key/tempo/chords are properties of the song, not of any stem
+        # selection — computed once and reused by every later re-render
+        if not analysis_json.is_file():
+            print("== 4/6 analyzing key/beats/chords ==", flush=True)
+            analyze(raw_wav, stem_dir, analysis_json)
+        if args.analysis_extras:
+            print("== 4/6 building workbench previews ==", flush=True)
+            write_waveform_json(raw_wav, work / "waveform.json")
+            write_stem_previews(stem_dir, work)
+        else:
+            print("== 4/6 transcribing melody ==", flush=True)
+            melody_stems = json.loads(args.melody_stems) if args.melody_stems else None
+            transcribe_melody(stem_dir, melody_midi, source=args.melody_source,
+                              stem_weights=melody_stems)
+    stop_after("transcribe")
+
+    info = json.loads(analysis_json.read_text())
+
+    if start <= STAGES.index("arrange"):
+        print("== 5/6 arranging ==", flush=True)
+        arrange(melody_midi, info, piano_midi, layers_midi,
+                tempo_scale=args.tempo_scale,
+                celesta=not args.no_celesta, pad=not args.no_pad,
+                humanize=not args.no_humanize)
+
+    print("== 6/6 rendering + mastering ==", flush=True)
+    sf_piano = piano_soundfont()
+    print(f"   piano soundfont: {sf_piano.name}", flush=True)
+    render_midi(piano_midi, piano_wav, sf_piano, gain=0.55)
+    lw = None
+    if layers_midi.exists():
+        render_midi(layers_midi, layers_wav, SF_FLUIDR3, gain=0.45)
+        lw = layers_wav
+
+    out_base = args.out or (OUTPUT / f"{args.input.stem}_lullaby")
+    out_base.parent.mkdir(parents=True, exist_ok=True)
+    final = master(piano_wav, lw, out_base.with_suffix(".wav"))
+    print(f"\nDone: {final}", flush=True)
+
+
+if __name__ == "__main__":
+    main()
+```
+
+## File 6 of 27 — `%USERPROFILE%\local-ai-studio\index.html`
 
 ```html
 <!doctype html>
@@ -2920,7 +8948,9 @@ if __name__ == "__main__":
             border-radius:var(--r-md);padding:6px;transition:border-color var(--dur),background var(--dur)}
   .filedrop:hover{border-color:var(--accent)}
   .filedrop.over{border-color:var(--accent);background:var(--accent-soft)}
-  .filedrop input[type=file]{background:transparent;border:0;padding:4px}
+  /* flex:1/width:0/min-width:0 — a long chosen-filename must never widen the input
+     past its column (it was pushing the whole card under the sticky output stage) */
+  .filedrop input[type=file]{background:transparent;border:0;padding:4px;flex:1 1 0;width:0;min-width:0}
   .filedrop-name{font-size:11.5px;color:var(--mut-2);margin-left:auto;padding-right:8px;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
   fieldset{border:0;padding:0;margin:0;display:flex;flex-direction:column;gap:var(--s4);transition:opacity var(--dur-2)}
@@ -2950,6 +8980,13 @@ if __name__ == "__main__":
 
   /* unlocked switch (restyled checkbox) */
   .chk{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;color:var(--mut);cursor:pointer;user-select:none;font-weight:550}
+  /* stacked variant: a checkbox whose explanation is a sentence, not a few words.
+     Plain .chk is align-items:center inline-flex, which squeezes a long .note
+     into its own narrow column beside the label. */
+  .chk.chk-stack{display:flex;align-items:flex-start;margin-bottom:7px}
+  .chk.chk-stack > input[type=checkbox]{margin-top:1px;flex:0 0 auto}
+  .chk.chk-stack > span{display:block;min-width:0}
+  .chk.chk-stack .note{display:block;margin-top:1px;font-weight:400;line-height:1.45}
   .chk input[type=checkbox]{appearance:none;width:34px;height:20px;border-radius:var(--r-full);background:var(--surface-3);
     border:1px solid var(--border);position:relative;flex:0 0 auto;transition:background var(--dur);cursor:pointer}
   .chk input[type=checkbox]::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;
@@ -2995,6 +9032,93 @@ if __name__ == "__main__":
     border-radius:var(--r-sm);padding:12px 14px;font-size:15px;line-height:1.6}
   img.result{max-width:100%;border-radius:var(--r-md);border:1px solid var(--border);box-shadow:var(--e1)}
   .thumbs{display:flex;gap:8px;flex-wrap:wrap}.thumbs img{height:70px;border-radius:8px;border:1px solid var(--border)}
+  /* Sprite Studio — checkerboard behind frames so transparency reads at a glance */
+  /* ---- Composer wizard ---- */
+  .wiz{display:flex;align-items:center;gap:6px;margin-bottom:12px;flex-wrap:wrap}
+  .wiz-step{display:flex;align-items:center;gap:9px;padding:7px 14px 7px 9px;border-radius:var(--r-sm);
+            border:1px solid var(--edge);background:var(--surface-2);cursor:pointer;text-align:left;color:var(--mut)}
+  .wiz-step:hover:not(.lock){border-color:var(--accent)}
+  .wiz-step.on{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 13%,transparent);color:var(--text)}
+  .wiz-step.lock{opacity:.45;cursor:not-allowed}
+  .wiz-step.done .wiz-n{background:var(--ok,#22c55e);color:#0e0e12}
+  .wiz-n{flex:0 0 auto;width:23px;height:23px;border-radius:50%;display:grid;place-items:center;
+         background:var(--surface-3);font-size:12px;font-weight:700}
+  .wiz-step.on .wiz-n{background:var(--accent);color:#fff}
+  .wiz-step b{display:block;font-size:12.5px;line-height:1.2}
+  .wiz-step small{display:block;font-size:10.5px;color:var(--muted)}
+  .wiz-sep{flex:0 0 18px;height:1px;background:var(--edge)}
+  /* Step 1 is deliberately two columns so the whole setup fits one screen —
+     it used to be a single tall column that always needed scrolling. */
+  .wiz-cols{display:grid;grid-template-columns:1.25fr 1fr;gap:14px;align-items:start}
+  .wiz-cols > .card{display:flex;flex-direction:column;gap:9px;margin:0}
+  @media (max-width:1100px){ .wiz-cols{grid-template-columns:1fr} }
+  .coed-player{display:block;margin:0 0 12px;padding:10px 12px}
+  .coed-player .pl-top{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:6px}
+  .coed-player b{font-size:13px}
+  .coed-player audio{display:block;width:100%;height:36px}
+  /* ---- Composer arrangement editor (DAW-style clip grid + channel strips) ---- */
+  .coed{width:100%;border:1px solid var(--edge);border-radius:var(--r-sm);overflow:hidden;background:var(--surface-2)}
+  .coed-bar{display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--surface-3);border-bottom:1px solid var(--edge);flex-wrap:wrap}
+  .coed-bar b{font-size:12px}
+  .coed-scroll{overflow-x:auto;overflow-y:visible}
+  .coed-grid{min-width:max-content}
+  .coed-row{display:flex;align-items:stretch;border-bottom:1px solid var(--edge);min-height:30px}
+  .coed-row:last-child{border-bottom:0}
+  .coed-row.on{background:color-mix(in srgb,var(--accent) 7%,transparent)}
+  .coed-head{flex:0 0 168px;position:sticky;left:0;z-index:2;background:var(--surface-2);
+             border-right:1px solid var(--edge);display:flex;align-items:center;gap:5px;padding:3px 6px}
+  .coed-row.on .coed-head{background:color-mix(in srgb,var(--accent) 12%,var(--surface-2))}
+  .coed-name{flex:1;min-width:0;font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
+  .coed-mini{flex:0 0 auto;width:17px;height:17px;border-radius:3px;border:1px solid var(--edge);
+             background:var(--surface-3);color:var(--muted);font-size:9px;font-weight:700;cursor:pointer;padding:0;line-height:15px}
+  .coed-mini.act{background:var(--warn);color:#1a1a1a;border-color:var(--warn)}
+  .coed-lane{flex:1;display:flex;align-items:stretch;gap:2px;padding:3px 2px}
+  .coed-clip{border-radius:3px;cursor:pointer;position:relative;overflow:hidden;
+             background:var(--surface-3);border:1px solid var(--edge);transition:filter .12s}
+  .coed-clip:hover{filter:brightness(1.35)}
+  .coed-clip.on{border-color:transparent}
+  .coed-clip canvas{display:block;width:100%;height:100%;opacity:.55}
+  .coed-clip .lbl{position:absolute;left:3px;top:1px;font-size:9px;font-weight:700;color:#0e0e12;opacity:.75;pointer-events:none}
+  .coed-secrow{display:flex;background:var(--surface-3);border-bottom:1px solid var(--edge);position:sticky;top:0;z-index:3}
+  .coed-secrow .coed-head{background:var(--surface-3)}
+  .coed-sec{border-left:1px solid var(--edge);padding:4px 5px;font-size:11px;cursor:pointer;overflow:hidden}
+  .coed-sec:first-child{border-left:0}
+  .coed-sec:hover{background:color-mix(in srgb,var(--accent) 14%,transparent)}
+  .coed-sec.sel{background:color-mix(in srgb,var(--accent) 22%,transparent)}
+  .coed-sec b{display:block;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .coed-sec span{font-size:10px;color:var(--muted);white-space:nowrap}
+  .coed-insp{border-top:1px solid var(--edge);padding:10px;background:var(--surface-2)}
+  .coed-insp .row{gap:10px}
+  .coed-knobs{display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:8px 12px}
+  .coed-knob label{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-bottom:1px}
+  .coed-knob input[type=range]{width:100%}
+  .coed-chips{display:flex;flex-wrap:wrap;gap:4px}
+  .coed-chip{font-size:11px;padding:2px 8px;border-radius:var(--r-full);border:1px solid var(--edge);
+             background:var(--surface-3);cursor:pointer;color:var(--muted)}
+  .coed-chip.on{background:var(--accent);border-color:var(--accent);color:#fff}
+  .coed-dirty{color:var(--warn);font-size:11px}
+  /* piano roll */
+  .coroll{border:1px solid var(--edge);border-radius:var(--r-sm);background:var(--surface-3);overflow:auto;max-height:340px}
+  .coroll canvas{display:block;cursor:crosshair}
+  .coed-note{font-size:11px;color:var(--muted)}
+  .spsec{width:100%;margin-bottom:16px}
+  .sphead{display:flex;align-items:center;gap:10px;margin:0 0 6px}
+  .sphead b{font-size:13px;text-transform:capitalize}
+  .sphead a.dlbtn{padding:4px 10px;font-size:12px;margin-left:auto}
+  .sphead a.dlbtn + a.dlbtn{margin-left:0}
+  .spframes{display:flex;flex-wrap:wrap;gap:6px}
+  .spframes img,.spsheet{border:1px solid var(--border);border-radius:8px;cursor:zoom-in;
+    background:repeating-conic-gradient(rgba(127,127,127,.16) 0% 25%, transparent 0% 50%) 0 0/16px 16px}
+  .spframes img{width:84px;height:84px;object-fit:contain}
+  .spf{position:relative}
+  .spf .rr{position:absolute;top:2px;right:2px;padding:1px 6px;font-size:11px;border-radius:6px;
+    border:1px solid var(--border);background:var(--surface-2);color:var(--mut);cursor:pointer;
+    opacity:0;transition:opacity .15s}
+  .spf:hover .rr{opacity:1}
+  .spf .rr:hover{color:var(--ink);background:var(--surface-3)}
+  .spsheet{max-width:100%}
+  .spchecks{display:grid;grid-template-columns:repeat(3,1fr);gap:6px 10px}
+  .spchecks .chk{font-size:13px}
   .tagchips{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
   audio{width:100%;margin-top:2px}
   .hide{display:none !important}
@@ -3163,7 +9287,7 @@ if __name__ == "__main__":
      var(--accent) (buttons, focus rings, load dots, chips) tints automatically. */
   .panel[data-panel="lang"]{--tone:var(--hue-text)}
   .panel[data-panel="gen"],.panel[data-panel="edit"]{--tone:var(--hue-image)}
-  .panel[data-panel="music"]{--tone:var(--hue-music)}
+  .panel[data-panel="music"],.panel[data-panel="lullaby"]{--tone:var(--hue-music)}
   .panel[data-panel="stt"],.panel[data-panel="tts"],.panel[data-panel="voicestudio"],.panel[data-panel="audiobook"]{--tone:var(--hue-voice)}
   .panel[data-panel="story"]{--tone:var(--hue-story)}
   .panel[data-panel="home"]{--tone:var(--hue-home)}
@@ -3195,7 +9319,7 @@ if __name__ == "__main__":
   .view-wide{max-width:1360px;margin:0 auto}
   fieldset.wsfs{display:block}
   .ws{display:grid;grid-template-columns:minmax(330px,410px) minmax(0,1fr);gap:18px;align-items:start}
-  .ws-ctl{display:flex;flex-direction:column;gap:var(--s4)}
+  .ws-ctl{display:flex;flex-direction:column;gap:var(--s4);min-width:0}
   .ws-out{position:sticky;top:0;display:flex;flex-direction:column;gap:11px}
   .stage{position:relative;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-lg);
     min-height:400px;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden;padding:14px;gap:12px}
@@ -3346,13 +9470,29 @@ if __name__ == "__main__":
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
           <span>Edit</span>
         </div>
+        <div class="navitem" data-tab="sprite" data-title="Sprite Studio" style="--ico:var(--hue-image)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+          <span>Sprites</span>
+        </div>
       </div>
 
       <div class="navgroup">
         <div class="navlabel">Music</div>
-        <div class="navitem" data-tab="music" data-title="Music — ACE-Step" style="--ico:var(--hue-music)">
+        <div class="navitem" data-tab="composer" data-title="Composer — arrange &amp; mix a song" style="--ico:var(--hue-music)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V9M9 20V4M14 20v-7M19 20v-11"/><circle cx="4" cy="20" r="1.4"/><circle cx="9" cy="20" r="1.4"/><circle cx="14" cy="20" r="1.4"/><circle cx="19" cy="20" r="1.4"/></svg>
+          <span>Composer</span>
+        </div>
+        <div class="navitem" data-tab="music" data-title="Music Generation — ACE-Step" style="--ico:var(--hue-music)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
-          <span>Music</span>
+          <span>Music Generation</span>
+        </div>
+        <div class="navitem" data-tab="lullaby" data-title="Lullaby — Piano Cover" style="--ico:var(--hue-music)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21a9 9 0 1 1 9-9c0 1-1 2-2.5 2S16 13 16 12a4 4 0 1 0-4 4"/><path d="M12 21c1.5 0 2.5-1 2.5-2.5S13.5 16 12 16"/></svg>
+          <span>Lullaby</span>
+        </div>
+        <div class="navitem" data-tab="split" data-title="Track Splitter" style="--ico:var(--hue-music)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3v18M18 3v18"/><path d="M9 7h6M9 12h6M9 17h6"/></svg>
+          <span>Track Splitter</span>
         </div>
       </div>
 
@@ -3562,11 +9702,147 @@ if __name__ == "__main__":
       </section>
 
       <!-- ===================== MUSIC: ACE-STEP ===================== -->
+      <!-- ===================== COMPOSER (brief -> arranged & mixed song) ===================== -->
+      <section class="panel" data-panel="composer">
+        <div class="view view-wide">
+          <div class="hero">
+            <span class="hico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V9M9 20V4M14 20v-7M19 20v-11"/><circle cx="4" cy="20" r="1.4"/><circle cx="9" cy="20" r="1.4"/><circle cx="14" cy="20" r="1.4"/><circle cx="19" cy="20" r="1.4"/></svg></span>
+            <div><h1>Composer</h1><div class="tag">Set it up, arrange it, export it — planned by your GPU's LLM, played by your CPU's sampler</div></div>
+            <div class="loadbar">
+              <button class="load" id="coLoad" onclick="loadModel('composer')">Load planner</button>
+              <button class="stop hide" id="coStop" onclick="stopModel('composer')">Stop planner</button>
+              <span class="loadstat" id="coStat"><span class="dot"></span>not loaded</span>
+            </div>
+          </div>
+
+          <!-- steps: 1 set up -> 2 arrange -> 3 export. 2 and 3 unlock once a song
+               exists, and stay freely clickable after that because editing is a
+               loop between them, not a one-way march. -->
+          <div class="wiz" id="coWiz">
+            <button class="wiz-step on" id="coStepBtn1" onclick="coGoStep(1)">
+              <span class="wiz-n">1</span><span><b>Set up</b><small>brief, style, sound</small></span></button>
+            <span class="wiz-sep"></span>
+            <button class="wiz-step lock" id="coStepBtn2" onclick="coGoStep(2)">
+              <span class="wiz-n">2</span><span><b>Arrange</b><small>tracks, clips, notes</small></span></button>
+            <span class="wiz-sep"></span>
+            <button class="wiz-step lock" id="coStepBtn3" onclick="coGoStep(3)">
+              <span class="wiz-n">3</span><span><b>Export</b><small>master, stems, MIDI</small></span></button>
+            <span class="spacer" style="flex:1"></span>
+            <span class="status" id="coStatus"></span>
+          </div>
+          <div id="coBarWrap" class="hide prog" style="width:100%;margin-bottom:12px"><div id="coBar"></div></div>
+
+          <!-- ============ STEP 1 — set up ============ -->
+          <div class="costep" id="coStep1">
+            <div class="wiz-cols">
+              <div class="card">
+                <div class="field"><label>Brief <span class="note">— what the song should be. The planner picks instruments, key, tempo, structure, chords and mix from this.</span></label>
+                  <textarea id="coBrief" style="min-height:70px" placeholder="a hopeful, cinematic instrumental about leaving a city at dawn — fragile piano start, huge strings-and-brass finish"></textarea>
+                  <div class="tagchips" style="margin-top:5px">
+                    <button type="button" class="copybtn" onclick="coSetBrief('a hopeful, cinematic instrumental about leaving a city at dawn — fragile start, huge finish','cinematic')">city at dawn</button>
+                    <button type="button" class="copybtn" onclick="coSetBrief('a neon-lit late-night drive — pulsing bass, wide arpeggios, a chorus that opens right up','synth-pop')">neon drive</button>
+                    <button type="button" class="copybtn" onclick="coSetBrief('a rainy-afternoon study loop — dusty keys, brushed drums, warm and unhurried','lo-fi')">rainy study</button>
+                    <button type="button" class="copybtn" onclick="coSetBrief('a festival main-stage banger — huge build, hard drop, relentless energy','edm')">main stage</button>
+                    <button type="button" class="copybtn" onclick="coSetBrief('a smoky late-set jazz number — walking bass, comping piano, sax taking the tune','jazz')">smoky jazz</button>
+                    <button type="button" class="copybtn" onclick="coSetBrief('a slow-burn stadium rock instrumental — clean verses, twin guitars, soaring solo','rock')">stadium rock</button>
+                  </div>
+                </div>
+                <div class="row">
+                  <div class="field"><label>Style</label><select id="coGenre"></select></div>
+                  <div class="field"><label>Length — <span id="coSecsLab">2:30</span></label>
+                    <input type="range" id="coSecs" min="45" max="360" step="15" value="150" oninput="coSecsLabel()"></div>
+                </div>
+                <div class="row">
+                  <div class="field"><label>Instruments — <span id="coTracksLab">6</span> <span class="note">tracks</span></label>
+                    <input type="range" id="coTracks" min="3" max="9" step="1" value="6" oninput="$('coTracksLab').textContent=this.value"></div>
+                  <div class="field"><label>Song name <span class="note">— folder under compositions/</span></label>
+                    <input type="text" id="coName" placeholder="auto from the date"></div>
+                </div>
+                <details class="adv"><summary>Advanced — key, tempo, seed, planner</summary>
+                  <div class="adv-body">
+                    <div class="row">
+                      <div class="field"><label>Key</label><select id="coKey">
+                        <option value="">Planner decides</option>
+                        <option>C major</option><option>C minor</option><option>D major</option><option>D minor</option><option>E major</option><option>E minor</option><option>F major</option><option>F minor</option><option>F# minor</option><option>G major</option><option>G minor</option><option>A major</option><option>A minor</option><option>Bb major</option><option>B minor</option><option>Eb major</option><option>Ab major</option>
+                      </select></div>
+                      <div class="field"><label>Tempo — <span id="coBpmLab">Planner decides</span></label>
+                        <input type="range" id="coBpm" min="0" max="200" step="2" value="0" oninput="$('coBpmLab').textContent=(+this.value?this.value+' bpm':'Planner decides')"></div>
+                      <div class="field"><label>Seed <span class="note">— -1 random</span></label>
+                        <input type="number" id="coSeed" value="-1"></div>
+                    </div>
+                    <label class="chk"><input type="checkbox" id="coStems" checked> 🎚 Export per-instrument stems</label>
+                    <label class="chk"><input type="checkbox" id="coUseLlm" checked> 🧠 Let the LLM plan it <span class="note">(off = style template, no model needed)</span></label>
+                  </div>
+                </details>
+              </div>
+
+              <div class="card">
+                <div class="field" style="margin-bottom:2px"><label>Sound</label></div>
+                <label class="chk chk-stack"><input type="checkbox" id="coHumanize" checked><span>🎻 Perform it, don't stamp it<span class="note">Within-note swells, strums &amp; rolls, drifting timing, drum round-robin. This is what stops it sounding like MIDI — untick to hear the raw quantized version.</span></span></label>
+                <label class="chk chk-stack"><input type="checkbox" id="coPolish" onchange="coPolishToggle()"><span>✨ ACE-Step re-texture pass<span class="note">Re-renders the master with learned timbres. Less MIDI-sounding but softens transients; ships <b>alongside</b> the clean master. Swaps the GPU model.</span></span></label>
+                <div class="field hide" id="coPolishWrap"><label>Polish strength — <span id="coPolLab">0.35</span></label>
+                  <input type="range" id="coPolishDen" min="0.15" max="0.6" step="0.05" value="0.35" oninput="$('coPolLab').textContent=(+this.value).toFixed(2)"></div>
+
+                <details class="adv" id="coLibDetails"><summary id="coLibSummary">Instrument library</summary>
+                  <div class="adv-body" style="max-height:210px;overflow:auto">
+                    <div id="coLibList" style="font-size:12px;line-height:1.65"></div>
+                  </div>
+                </details>
+
+                <button class="go" id="coGo" onclick="coStart()" style="margin-top:auto">🎼 Compose song</button>
+                <button class="rec hide" id="coCancel" onclick="coCancel()">■ Cancel</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- ============ STEP 2 — arrange ============ -->
+          <div class="costep hide" id="coStep2">
+            <div class="coed-player card" id="coEdPlayer">
+              <div class="pl-top">
+                <b id="coEdNowPlaying">—</b>
+                <span class="coed-note" style="margin-left:auto">edit below, then re-render to hear the change</span>
+              </div>
+              <audio controls id="coEdAudio"></audio>
+            </div>
+            <div class="coed" id="coEd">
+              <div class="coed-bar">
+                <b id="coEdTitle">Arrangement</b>
+                <span class="coed-note" id="coEdInfo"></span>
+                <span class="coed-dirty hide" id="coEdDirty">● unsaved edits</span>
+                <span class="spacer" style="flex:1"></span>
+                <button class="copybtn" onclick="coEdAddTrack()">+ track</button>
+                <button class="copybtn" onclick="coEdAddSection()">+ section</button>
+                <button class="copybtn" onclick="coEdReset()" title="Discard edits and reload the saved score">↺ revert</button>
+                <button class="go" id="coEdRender" style="width:auto;padding:6px 14px" onclick="coEdRerender()">▶ Re-render</button>
+              </div>
+              <div class="coed-scroll"><div class="coed-grid" id="coEdGrid"></div></div>
+              <div class="coed-insp" id="coEdInsp"></div>
+            </div>
+          </div>
+
+          <!-- ============ STEP 3 — export ============ -->
+          <div class="costep hide" id="coStep3">
+            <div class="stage" id="coStage">
+              <div class="empty" id="coEmpty">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V9M9 20V4M14 20v-7M19 20v-11"/></svg>
+                <b>Your song appears here</b>
+                Compose one in step 1 — you get the master, the producer's reasoning, every instrument's mix settings, the arrangement, the stems and the multitrack MIDI.
+              </div>
+              <div class="resultwrap hide" id="coOut" style="width:100%"></div>
+            </div>
+            <div class="outbar">
+              <div class="meta" id="coMeta">Saved under <b>compositions/</b> — nothing leaves this machine.</div>
+              <a class="dlbtn hide" id="coZip" href="#">⬇ Download everything</a>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section class="panel" data-panel="music">
         <div class="view view-wide">
           <div class="hero">
             <span class="hico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></span>
-            <div><h1>Music</h1><div class="tag">Full songs &amp; instrumentals · ACE-Step 3.5B on your GPU</div></div>
+            <div><h1>Music Generation</h1><div class="tag">Full songs &amp; instrumentals · ACE-Step 3.5B on your GPU</div></div>
             <div class="loadbar">
               <button class="load" id="muLoad" onclick="loadModel('music')">Load model</button>
               <button class="stop hide" id="muStop" onclick="stopModel('music')">Stop model</button>
@@ -3739,6 +10015,175 @@ if __name__ == "__main__":
         </div>
       </section>
 
+      <!-- ===================== LULLABY (song -> piano lullaby) ===================== -->
+      <section class="panel" data-panel="lullaby">
+        <div class="view view-wide">
+          <div class="hero">
+            <span class="hico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21a9 9 0 1 1 9-9c0 1-1 2-2.5 2S16 13 16 12a4 4 0 1 0-4 4"/></svg></span>
+            <div><h1>Lullaby</h1><div class="tag">Turn any song into a soft solo-piano lullaby instrumental</div></div>
+          </div>
+          <div class="ws">
+            <div class="ws-ctl">
+              <div class="card">
+                <div class="field"><label>Song file <span class="note">(mp3 / wav / mp4 — audio is extracted automatically)</span></label>
+                  <label class="filedrop"><input type="file" id="lbFile" accept="audio/*,video/mp4" onchange="lbFileChange()"><span class="filedrop-name"></span></label>
+                </div>
+                <button class="go" id="lbAnalyzeBtn" onclick="lbAnalyze()">🔍 Analyze song</button>
+                <div id="lbWorkbench" class="hide">
+                  <div class="field"><label>Song map <span class="note" id="lbSummary"></span></label>
+                    <canvas id="lbWave" height="86" style="width:100%;border-radius:8px;background:rgba(255,255,255,.04)"></canvas>
+                  </div>
+                  <div class="field"><label>Tracks <span class="note">(listen to each — ticked tracks carry into the lullaby at their slider level; the Piano engine's melody is transcribed straight from this selection too)</span></label>
+                    <button type="button" class="rec" style="align-self:flex-start" onclick="playAllSelected('#lbStems', this)">▶ Play all selected</button>
+                    <div id="lbStems" style="display:flex;flex-direction:column;gap:8px"></div>
+                  </div>
+                </div>
+                <div class="field"><label>Engine</label>
+                  <div class="seg" id="lbModeSeg">
+                    <button type="button" class="active" data-mode="remix" onclick="lbSetMode('remix')">Remix — close to the original</button>
+                    <button type="button" data-mode="piano" onclick="lbSetMode('piano')">Piano — rebuilt arrangement</button>
+                    <button type="button" data-mode="melody-match" onclick="lbSetMode('melody-match')">Melody Match — closest to the sung tune</button>
+                  </div>
+                </div>
+                <div id="lbRemixCtl">
+                  <div class="field"><label>Follow</label>
+                    <select id="lbFocus">
+                      <option value="both">Whole song — vocals + instruments equally (recommended)</option>
+                      <option value="vocals">Vocal melody — instruments turned down in what ACE hears</option>
+                      <option value="instruments">Instruments — vocals turned down in what ACE hears</option>
+                    </select>
+                  </div>
+                  <div class="field"><label>Re-imagination</label>
+                    <div class="row">
+                      <div style="flex:1"><span class="note">Denoise <b id="lbSoftVal">0.60</b> — higher drifts further from the original but gets dreamier</span>
+                        <input type="range" id="lbSoft" min="0.45" max="0.75" step="0.01" value="0.60" style="width:100%"
+                               oninput="document.getElementById('lbSoftVal').textContent=(+this.value).toFixed(2)"></div>
+                    </div>
+                  </div>
+                  <div class="field"><label>Slowdown</label>
+                    <div class="row">
+                      <div style="flex:1"><span class="note">Tempo <b id="lbSlowVal">100%</b> of original (85-90% = sleepier)</span>
+                        <input type="range" id="lbSlow" min="0.8" max="1" step="0.01" value="1" style="width:100%"
+                               oninput="document.getElementById('lbSlowVal').textContent=Math.round(this.value*100)+'%'"></div>
+                    </div>
+                  </div>
+                  <div class="meta">Drums and bass are removed and the song's dynamics are deeply flattened so it
+                    stays soft the whole way through, then ACE-Step re-imagines it as a hushed felt-piano
+                    lullaby and a dark, quiet mastering chain finishes it. Sounds closest to the original song.</div>
+                </div>
+                <div id="lbPianoCtl" class="hide">
+                  <div class="field"><label>Slowdown</label>
+                    <div class="row">
+                      <div style="flex:1"><span class="note">Tempo <b id="lbTempoVal">72%</b> of original</span>
+                        <input type="range" id="lbTempo" min="0.55" max="0.95" step="0.01" value="0.72" style="width:100%"
+                               oninput="document.getElementById('lbTempoVal').textContent=Math.round(this.value*100)+'%'"></div>
+                    </div>
+                  </div>
+                  <div class="field"><label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+                    <input type="checkbox" id="lbPolish" style="width:auto">
+                    ACE-Step polish <span class="note">(experimental — can wander off the arrangement)</span></label>
+                  </div>
+                  <div class="meta">The vocal melody is transcribed, key &amp; chords are detected, and the song is
+                    rebuilt as a rocking piano + music-box arrangement at true lullaby tempo, rendered with a
+                    real sampled grand piano. A different, more storybook sound.</div>
+                </div>
+                <div id="lbMelodyCtl" class="hide">
+                  <div class="field"><label>Instrument</label>
+                    <select id="lbInstrument">
+                      <option value="cello" selected>Cello — warm, closest overall match</option>
+                      <option value="violin">Violin</option>
+                      <option value="flute">Flute</option>
+                      <option value="synth_voice">Synth Voice — most precise, less "instrumental"</option>
+                      <option value="music_box">Music Box</option>
+                    </select>
+                  </div>
+                  <div class="field"><label>Slowdown</label>
+                    <div class="row">
+                      <div style="flex:1"><span class="note">Tempo <b id="lbMelodyTempoVal">85%</b> of original</span>
+                        <input type="range" id="lbMelodyTempo" min="0.55" max="1" step="0.01" value="0.85" style="width:100%"
+                               oninput="document.getElementById('lbMelodyTempoVal').textContent=Math.round(this.value*100)+'%'"></div>
+                    </div>
+                  </div>
+                  <div class="field"><label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+                    <input type="checkbox" id="lbMelodyPolish" style="width:auto">
+                    ACE-Step polish <span class="note">(experimental — re-textures the render, can wander off the melody)</span></label>
+                  </div>
+                  <div class="meta">Traces the singer's actual pitch curve directly (no scale-snapping or
+                    rhythm quantization — the tune it plays is the tune that was sung, glides and all) and
+                    plays it on one instrument capable of sliding between notes like a voice does. Each
+                    ticked track above can be routed independently via its <b>Route</b> selector — traced
+                    onto the instrument, or rebuilt as a full Piano-style arrangement instead — and both are
+                    mixed together, so e.g. vocals can follow the instrument while an existing piano part
+                    gets its own rebuilt accompaniment.</div>
+                </div>
+                <button class="go hide" id="lbRenderBtn" onclick="lbRender()">🎹 Render lullaby</button>
+                <div class="status" id="lbStatus"></div>
+              </div>
+            </div>
+            <div class="ws-out">
+              <div class="stage" id="lbStage" style="min-height:300px;justify-content:flex-start">
+                <div class="empty" id="lbEmpty">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21a9 9 0 1 1 9-9c0 1-1 2-2.5 2S16 13 16 12a4 4 0 1 0-4 4"/></svg>
+                  <b>Your lullaby appears here</b>
+                  Upload a song and press Make lullaby — you'll get an MP3 and a lossless WAV.
+                </div>
+                <div id="lbBarWrap" class="hide prog" style="width:100%"><div id="lbBar"></div></div>
+                <div id="lbFiles" style="width:100%;display:flex;flex-direction:column;gap:12px"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===================== TRACK SPLITTER ===================== -->
+      <section class="panel" data-panel="split">
+        <div class="view view-wide">
+          <div class="hero">
+            <span class="hico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3v18M18 3v18"/><path d="M9 7h6M9 12h6M9 17h6"/></svg></span>
+            <div><h1>Track Splitter</h1><div class="tag">Split any song into vocals, guitar, piano, bass, drums &amp; other — and save them</div></div>
+          </div>
+          <div class="ws">
+            <div class="ws-ctl">
+              <div class="card">
+                <div class="field"><label>Song file <span class="note">(mp3 / wav / mp4 — audio is extracted automatically)</span></label>
+                  <label class="filedrop"><input type="file" id="spFile" accept="audio/*,video/mp4" onchange="spFileChange()"><span class="filedrop-name"></span></label>
+                </div>
+                <div class="field"><label>Save as</label>
+                  <div class="seg" id="spFormatSeg">
+                    <button type="button" class="active" data-fmt="mp3" onclick="spSetFormat('mp3')">MP3 — smaller files</button>
+                    <button type="button" data-fmt="wav" onclick="spSetFormat('wav')">WAV — lossless</button>
+                  </div>
+                </div>
+                <button class="go" id="spGoBtn" onclick="spSplit()">✂️ Split into tracks</button>
+                <div class="status" id="splStatus"></div>
+                <div class="field" style="margin-top:4px"><label>Previously split</label>
+                  <div class="row" style="align-items:flex-end">
+                    <select id="spLibrary" onchange="spOpenLibrary()"><option value="">— none yet —</option></select>
+                    <button type="button" class="rec" style="flex:0 0 auto" onclick="spRefreshLibrary()" title="Refresh">↻</button>
+                  </div>
+                </div>
+                <div class="meta">Runs the same two-pass separation as the Lullaby tab (Demucs htdemucs_ft for
+                  clean vocals/drums/bass/other, htdemucs_6s for guitar/piano) — no arrangement, just the raw
+                  tracks, saved to disk for you to use anywhere.</div>
+              </div>
+            </div>
+            <div class="ws-out">
+              <div class="stage" id="splStage" style="min-height:300px;justify-content:flex-start">
+                <div class="empty" id="splEmpty">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3v18M18 3v18"/><path d="M9 7h6M9 12h6M9 17h6"/></svg>
+                  <b>Your split tracks appear here</b>
+                  Upload a song and press Split — each track gets its own scrubbable player and download link.
+                </div>
+                <div id="splBarWrap" class="hide prog" style="width:100%"><div id="splBar"></div></div>
+                <a id="spZipBtn" class="go hide" style="text-decoration:none;text-align:center" download>⬇ Download all (.zip)</a>
+                <button type="button" id="spPlayAllBtn" class="rec hide" onclick="playAllSelected('#spTracks', this)">▶ Play all selected</button>
+                <div id="spTracks" style="width:100%;display:flex;flex-direction:column;gap:10px"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <!-- ===================== IMAGE: EDIT ===================== -->
       <section class="panel" data-panel="edit">
         <div class="view view-wide">
@@ -3798,6 +10243,103 @@ if __name__ == "__main__":
                 <div class="meta hide" id="edMeta"></div>
                 <span class="spacer"></span>
                 <a id="edDl" class="hide dlbtn" download="image.png">⬇ Save image</a>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===================== SPRITE STUDIO ===================== -->
+      <section class="panel" data-panel="sprite">
+        <div class="view view-wide">
+          <div class="hero">
+            <span class="hico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span>
+            <div><h1>Sprite Studio</h1><div class="tag">One reference image → style-matched 2D game sprites &amp; sheets</div></div>
+            <div class="loadbar">
+              <button class="load" id="spLoad" onclick="loadModel('sprite')">Load model</button>
+              <button class="stop hide" id="spStop" onclick="stopModel('sprite')">Stop model</button>
+              <span class="loadstat" id="spStat"><span class="dot"></span>not loaded</span>
+            </div>
+          </div>
+          <div class="ws">
+            <div class="ws-ctl">
+              <div class="card">
+                <div class="field"><label>Model <span class="note">(shared with Generate &amp; Edit)</span></label>
+                  <select id="spModel" onchange="reeval()"><option value="base4b">Base 4B (Apache, commercial-safe)</option><option value="miraclein9b">Miraclein 9B (uncensored · personal art)</option></select>
+                </div>
+                <fieldset id="spFs" disabled>
+                  <div class="field"><label>Reference image — defines the character &amp; style</label>
+                    <label class="filedrop"><input type="file" id="spRef" accept="image/*" onchange="spRefPreview()"><span class="filedrop-name"></span></label>
+                    <div class="thumbs" id="spRefThumb"></div>
+                  </div>
+                  <div class="field"><label>Character description <span class="note">(optional — improves consistency)</span></label>
+                    <input type="text" id="spDesc" placeholder="e.g. a small knight in blue armor with a round wooden shield">
+                  </div>
+                  <div class="field"><label>What to generate</label><br>
+                    <div class="seg" id="spModeSeg">
+                      <button type="button" class="active" data-mode="single" onclick="spSetMode('single')">Single action</button>
+                      <button type="button" data-mode="set" onclick="spSetMode('set')">Full sprite set</button>
+                    </div>
+                  </div>
+                  <div id="spSingle">
+                    <div class="row">
+                      <div class="field"><label>Action</label><select id="spAction" onchange="spActionChange()"></select></div>
+                      <div class="field"><label>Frames <span class="note">(blank = default)</span></label>
+                        <input type="number" id="spFrames" min="2" max="12" placeholder="auto" oninput="spEstimate()"></div>
+                    </div>
+                    <div class="field hide" id="spCustomWrap"><label>Custom action — describe the motion</label>
+                      <input type="text" id="spCustom" placeholder="e.g. swinging a fishing rod · climbing a ladder · casting a spell"></div>
+                  </div>
+                  <div id="spSet" class="hide">
+                    <div class="field"><label>Actions in the set</label>
+                      <div class="spchecks" id="spSetActions"></div>
+                    </div>
+                  </div>
+                  <div class="row">
+                    <div class="field"><label>Perspective</label>
+                      <select id="spView">
+                        <option value="side">Side view (platformer)</option>
+                        <option value="front">Front view</option>
+                        <option value="topdown">Top-down (RPG)</option>
+                        <option value="34">3/4 view</option>
+                      </select></div>
+                    <div class="field"><label>Frame size</label>
+                      <select id="spSize"><option value="128">128 px</option><option value="256" selected>256 px</option><option value="512">512 px</option><option value="1024">1024 px (native)</option></select></div>
+                  </div>
+                  <div class="field"><label class="chk"><input type="checkbox" id="spCut" checked> Transparent background (rembg cutout)</label></div>
+                  <div class="field"><label>Set name <span class="note">(saved under sprites/ — blank = auto)</span></label>
+                    <input type="text" id="spName" placeholder="e.g. blue-knight"></div>
+                  <details class="adv"><summary>Advanced — steps, style fidelity, seed</summary>
+                    <div class="adv-body">
+                      <div class="row">
+                        <div class="field"><label>Steps</label><input type="number" id="spSteps" value="24" min="4" max="50"></div>
+                        <div class="field"><label>Seed (-1=rand)</label><input type="number" id="spSeed" value="-1"></div>
+                      </div>
+                      <div class="field"><label>Style fidelity</label>
+                        <select id="spCfg"><option value="2">Closest to reference</option><option value="2.5" selected>Balanced</option><option value="3.5">Strong poses</option></select></div>
+                    </div>
+                  </details>
+                  <div class="note" id="spEstimate"></div>
+                  <button class="go" id="spGo" onclick="runSprites()">✦ Generate sprites</button>
+                  <button class="stop hide" id="spCancel" type="button" onclick="cancelSprites()">✕ Cancel after this frame</button>
+                  <div id="spBarWrap" class="hide prog" style="width:100%"><div id="spBar"></div></div>
+                  <div class="status" id="spStatus"></div>
+                </fieldset>
+              </div>
+            </div>
+            <div class="ws-out">
+              <div class="stage" id="spStage" style="min-height:300px">
+                <div class="empty" id="spEmpty">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+                  <b>Your sprites appear here</b>
+                  Drop in one character image, pick an action or a full set, and Generate. Frames appear as they finish; the checkerboard shows transparency.
+                </div>
+                <div class="out hide" id="spOut" style="width:100%;border:0;background:transparent"></div>
+              </div>
+              <div class="outbar">
+                <div class="meta hide" id="spMeta"></div>
+                <span class="spacer"></span>
+                <a id="spZip" class="hide dlbtn">⬇ Download set (.zip)</a>
               </div>
             </div>
           </div>
@@ -4143,7 +10685,8 @@ const $ = id => document.getElementById(id);
 
 /* ===================== SHELL: nav, theme, palette, toasts ===================== */
 const VIEW_TONES={home:'--hue-home',lang:'--hue-text',story:'--hue-story',gen:'--hue-image',edit:'--hue-image',
-                  music:'--hue-music',stt:'--hue-voice',tts:'--hue-voice',voicestudio:'--hue-voice',audiobook:'--hue-voice'};
+                  sprite:'--hue-image',composer:'--hue-music',music:'--hue-music',lullaby:'--hue-music',split:'--hue-music',
+                  stt:'--hue-voice',tts:'--hue-voice',voicestudio:'--hue-voice',audiobook:'--hue-voice'};
 function setActiveTab(name){
   document.querySelectorAll('.navitem').forEach(x=>x.classList.toggle('active',x.dataset.tab===name));
   document.querySelectorAll('.panel').forEach(x=>x.classList.toggle('active',x.dataset.panel===name));
@@ -4160,6 +10703,8 @@ $('hamb').addEventListener('click',()=>{
   try{localStorage.setItem('lais-nav',min?'min':'');}catch(e){}
 });
 try{ if(localStorage.getItem('lais-nav')==='min') document.body.classList.add('nav-min'); }catch(e){}
+/* tab deep-links: open http://127.0.0.1:8800/#sprite (any data-tab name) to land on that tab */
+try{ const h=location.hash.slice(1); if(h&&document.querySelector('.navitem[data-tab="'+h+'"]')) setActiveTab(h); }catch(e){}
 document.querySelectorAll('.navitem').forEach(n=>n.title=n.dataset.title||'');  // tooltips for the icon rail
 document.addEventListener('click',e=>{ if(document.body.classList.contains('nav-open') && !e.target.closest('.sidebar') && !e.target.closest('#hamb')) document.body.classList.remove('nav-open'); });
 
@@ -4183,6 +10728,8 @@ const CMDK_ITEMS=[
   {t:'Story Maker',f:()=>setActiveTab('story')},
   {t:'Image — Generate',f:()=>setActiveTab('gen')},
   {t:'Image — Edit',f:()=>setActiveTab('edit')},
+  {t:'Sprite Studio',f:()=>setActiveTab('sprite')},
+  {t:'Composer — arrange & mix a song',f:()=>setActiveTab('composer')},
   {t:'Music — ACE-Step',f:()=>setActiveTab('music')},
   {t:'Speech → Text',f:()=>setActiveTab('stt')},
   {t:'Text → Speech',f:()=>setActiveTab('tts')},
@@ -4219,7 +10766,8 @@ const HOME_TILES=[
   {tab:'story',t:'Story Maker',d:'Plan & generate prose',hue:'--hue-story',ic:'<path d="M4 5a2 2 0 0 1 2-2h6v18H6a2 2 0 0 0-2 2z"/><path d="M20 5a2 2 0 0 0-2-2h-6v18h6a2 2 0 0 1 2 2z"/>'},
   {tab:'gen',t:'Generate image',d:'FLUX.2 Klein',hue:'--hue-image',ic:'<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.6"/><path d="M21 15l-5-5L5 21"/>'},
   {tab:'edit',t:'Edit image',d:'Remove · reframe · recompose',hue:'--hue-image',ic:'<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>'},
-  {tab:'music',t:'Music',d:'ACE-Step · songs & instrumentals',hue:'--hue-music',ic:'<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>'},
+  {tab:'sprite',t:'Sprite Studio',d:'2D game sprites & sheets',hue:'--hue-image',ic:'<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>'},
+  {tab:'composer',t:'Composer',d:'Arrange, mix & automate a song',hue:'--hue-music',ic:'<path d="M4 20V9M9 20V4M14 20v-7M19 20v-11"/><circle cx="4" cy="20" r="1.4"/><circle cx="9" cy="20" r="1.4"/><circle cx="14" cy="20" r="1.4"/><circle cx="19" cy="20" r="1.4"/>'},
   {tab:'music',t:'Music',d:'Songs & instrumentals · ACE-Step',hue:'--hue-music',ic:'<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>'},
   {tab:'stt',t:'Speech → Text',d:'Parakeet transcription',hue:'--hue-voice',ic:'<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/>'},
   {tab:'tts',t:'Text → Speech',d:'Kokoro · Chatterbox',hue:'--hue-voice',ic:'<path d="M11 5 6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/>'},
@@ -4280,8 +10828,14 @@ const TABS = {
        key:()=>'image:'+$('imgModel').value, params:()=>({worker:'image',model:$('imgModel').value})},
   edit:{fs:'editFs',load:'editLoad',stop:'editStop',stat:'editStat',
         key:()=>'image:'+$('edModel').value, params:()=>({worker:'image',model:$('edModel').value})},
+  sprite:{fs:'spFs',load:'spLoad',stop:'spStop',stat:'spStat',
+        key:()=>'image:'+$('spModel').value, params:()=>({worker:'image',model:$('spModel').value})},
   music:{fs:'muFs',load:'muLoad',stop:'muStop',stat:'muStat',
          key:()=>'music', params:()=>({worker:'music'})},
+  // no fieldset: the Composer still works with no model loaded (it arranges from
+  // the style template), so the panel is never gated — only the planner is
+  composer:{load:'coLoad',stop:'coStop',stat:'coStat',
+         key:()=>'llm:'+CFG.standard_model, params:()=>({worker:'llm',task:'research'})},
   stt:{fs:'sttFs',load:'sttLoad',stop:'sttStop',stat:'sttStat',
        key:()=>'stt', params:()=>({worker:'stt'})},
   tts:{fs:'ttsFs',load:'ttsLoad',stop:'ttsStop',stat:'ttsStat',
@@ -4447,6 +11001,640 @@ async function runEdit(){
   }catch(e){setStatus('edStatus',e.message,'err');}
   finally{ stageBusy('edStage',false); }
 }
+/* ---- Sprite Studio ---- */
+// Mirror of server-side SPRITE_ACTIONS: action -> default frame count.
+const SP_ACTIONS={idle:4,walk:6,run:6,jump:4,fall:2,crouch:2,attack:5,hurt:2,death:5};
+$('spAction').innerHTML=Object.entries(SP_ACTIONS).map(([a,n])=>`<option value="${a}">${a} (${n} frames)</option>`).join('')+'<option value="custom">Custom…</option>';
+$('spSetActions').innerHTML=Object.entries(SP_ACTIONS).map(([a,n])=>`<label class="chk"><input type="checkbox" data-act="${a}" checked> ${a} <span class="note">(${n})</span></label>`).join('');
+$('spSetActions').addEventListener('change',()=>spEstimate());
+let SP_MODE='single', spTimer=null;
+function spSetMode(m){SP_MODE=m; document.querySelectorAll('#spModeSeg button').forEach(b=>b.classList.toggle('active',b.dataset.mode===m));
+  $('spSingle').classList.toggle('hide',m!=='single'); $('spSet').classList.toggle('hide',m!=='set'); spEstimate();}
+function spActionChange(){ $('spCustomWrap').classList.toggle('hide',$('spAction').value!=='custom'); spEstimate(); }
+function spRefPreview(){ const box=$('spRefThumb'); box.innerHTML=''; const f=$('spRef').files[0];
+  if(f){ const i=new Image(); i.src=URL.createObjectURL(f); box.appendChild(i); } }
+function spFrameCount(){
+  if(SP_MODE==='set') return [...document.querySelectorAll('#spSetActions input:checked')].reduce((s,c)=>s+SP_ACTIONS[c.dataset.act],0);
+  return Math.min(12,Math.max(2,+$('spFrames').value||SP_ACTIONS[$('spAction').value]||4)); }
+function spEstimate(){ const n=spFrameCount();
+  $('spEstimate').textContent=`${n} frames ≈ ${Math.max(1,Math.round(n*0.6))}–${Math.round(n*1.1)} min — frames appear as they finish; everything is saved to sprites/.`; }
+function spDone(){ $('spGo').classList.remove('hide'); $('spCancel').classList.add('hide'); stageBusy('spStage',false); }
+async function cancelSprites(){ try{ await post('/api/sprite_cancel',{}); setStatus('spStatus','cancelling after this frame…','run'); }catch(e){} }
+async function runSprites(){
+  const img=await fileB64($('spRef'));
+  if(!img){ setStatus('spStatus','add a reference image first','err'); return; }
+  const body={image:img,desc:$('spDesc').value.trim(),mode:SP_MODE,view:$('spView').value,
+    size:+$('spSize').value,cutout:$('spCut').checked,steps:+$('spSteps').value,
+    cfg:+$('spCfg').value,seed:+$('spSeed').value,name:$('spName').value.trim()};
+  if(SP_MODE==='set'){
+    body.actions=[...document.querySelectorAll('#spSetActions input:checked')].map(c=>c.dataset.act);
+    if(!body.actions.length){ setStatus('spStatus','pick at least one action','err'); return; }
+  }else{
+    body.action=$('spAction').value; body.custom=$('spCustom').value.trim();
+    if(body.action==='custom'&&!body.custom){ setStatus('spStatus','describe the custom action','err'); return; }
+    const f=+$('spFrames').value; if(f) body.frames=f;
+  }
+  $('spGo').classList.add('hide'); $('spCancel').classList.remove('hide');
+  $('spBarWrap').classList.remove('hide'); $('spBar').style.width='0%';
+  $('spOut').innerHTML=''; $('spZip').classList.add('hide'); $('spMeta').classList.add('hide');
+  SP_FILES=new Set();
+  setStatus('spStatus','starting…','run'); stageBusy('spStage',true);
+  try{ await post('/api/sprite_start',body); spPoll(); }
+  catch(e){ setStatus('spStatus',e.message,'err'); spDone(); }
+}
+async function spPoll(){
+  clearTimeout(spTimer);
+  try{
+    const s=await get('/api/sprite_status');
+    const pct=s.total?Math.round((s.step/s.total)*100):0; $('spBar').style.width=pct+'%';
+    spRender(s);
+    if(s.state==='running'){
+      setStatus('spStatus',`Rendering ${s.step}/${s.total} — ${s.current||''}`,'run');
+      $('spGo').classList.add('hide'); $('spCancel').classList.remove('hide');
+      $('spBarWrap').classList.remove('hide'); stageBusy('spStage',true);
+      spTimer=setTimeout(spPoll,2500); return;
+    }
+    if(s.state==='done'){
+      setStatus('spStatus','✓ '+(s.message||'sprite set complete'),'ok'); $('spBar').style.width='100%';
+      $('spZip').href='/api/sprite_zip?name='+encodeURIComponent(s.name);
+      $('spZip').setAttribute('download',s.name+'.zip'); $('spZip').classList.remove('hide');
+      $('spMeta').innerHTML=`<span>saved to <b>sprites/${s.name}</b></span>`; $('spMeta').classList.remove('hide');
+    }
+    else if(s.state==='error'){ setStatus('spStatus','Error: '+s.message,'err'); }
+    else if(s.state==='cancelled'){ setStatus('spStatus','Cancelled — finished frames kept in sprites/'+s.name,'ok'); }
+    spDone();
+  }catch(e){ spTimer=setTimeout(spPoll,3000); }
+}
+let SP_NAME=null, SP_FILES=new Set();
+function spRender(s){
+  if(!(s.files||[]).length) return;
+  if(s.name&&s.name!==SP_NAME){ SP_NAME=s.name; SP_FILES=new Set(); }
+  // A re-roll's status lists only the rebuilt files — merge so the rest stay visible.
+  (s.files||[]).forEach(f=>SP_FILES.add(f));
+  const files=[...SP_FILES];
+  $('spEmpty').classList.add('hide'); $('spStage').classList.add('hasresult'); $('spOut').classList.remove('hide');
+  const url=f=>'/sprites/'+f.split('/').map(encodeURIComponent).join('/');
+  const groups={}; let combined=null, meta=null;
+  files.forEach(f=>{ const parts=f.split('/');
+    if(parts.length===3){ const g=groups[parts[1]]=groups[parts[1]]||{frames:[]}; g.frames.push(f); }
+    else if(f.endsWith('_sheet.png')){ const a=parts[1].replace(/_sheet\.png$/,''); const g=groups[a]=groups[a]||{frames:[]}; g.sheet=f; }
+    else if(f.endsWith('spritesheet.png')) combined=f;
+    else if(f.endsWith('spritesheet.json')) meta=f; });
+  // Cache-busting: normal run flips v once when an action's strip lands (frames were
+  // rewritten in place by the cutout pass); a re-roll (total===1) busts with a timestamp.
+  const rr=s.total===1, stamp=Date.now();
+  let h='';
+  if(combined) h+=`<div class="spsec"><div class="sphead"><b>Combined sheet</b>
+      <a class="dlbtn" href="${url(combined)}" download>⬇ spritesheet.png</a>${meta?`<a class="dlbtn" href="${url(meta)}" download>⬇ metadata</a>`:''}</div>
+      <img class="spsheet" src="${url(combined)}${rr?'?v='+stamp:''}" onclick="lightbox(this)"></div>`;
+  for(const [a,g] of Object.entries(groups)){
+    const v=rr?stamp:(g.sheet?2:1);
+    h+=`<div class="spsec"><div class="sphead"><b>${a}</b><span class="note">${g.frames.length} frames</span>
+        ${g.sheet?`<a class="dlbtn" href="${url(g.sheet)}${rr?'?v='+stamp:''}" download>⬇ strip sheet</a>`:''}</div>
+        <div class="spframes">${g.frames.map((f,i)=>`<span class="spf"><img src="${url(f)}?v=${v}" loading="lazy" onclick="lightbox(this)">
+          <button class="rr" title="Re-roll this frame (new seed, stronger pose guidance)" onclick="spReroll('${a}',${i+1})">↻</button></span>`).join('')}</div></div>`;
+  }
+  $('spOut').innerHTML=h;
+}
+async function spReroll(action,frame){
+  if(!SP_NAME){ setStatus('spStatus','no sprite set loaded','err'); return; }
+  setStatus('spStatus',`re-rolling ${action} frame ${frame}…`,'run'); stageBusy('spStage',true);
+  $('spGo').classList.add('hide'); $('spBarWrap').classList.remove('hide'); $('spBar').style.width='0%';
+  try{ await post('/api/sprite_reroll',{name:SP_NAME,action:action,frame:frame}); spPoll(); }
+  catch(e){ setStatus('spStatus',e.message,'err'); spDone(); }
+}
+spEstimate();
+// A sprite set survives a page refresh: reattach to a running/finished job on load.
+get('/api/sprite_status').then(s=>{ if(s.state==='running'||(s.files||[]).length) spPoll(); }).catch(()=>{});
+
+/* ---- Composer (brief -> arranged, mixed, automated song) ---- */
+let coTimer=null, CO_LIB=null;
+
+function coSecsLabel(){ const v=+$('coSecs').value; $('coSecsLab').textContent=Math.floor(v/60)+':'+String(v%60).padStart(2,'0'); }
+function coPolishToggle(){ $('coPolishWrap').classList.toggle('hide',!$('coPolish').checked); }
+
+/* ---- wizard steps ----
+   Steps 2 and 3 need a rendered song, so they stay locked until one exists.
+   After that all three are freely clickable: arranging and exporting is a loop
+   (edit -> re-render -> listen -> edit), not a one-way sequence. */
+let CO_STEP=1, CO_HAS_SONG=false;
+function coGoStep(n){
+  if(n>1&&!CO_HAS_SONG) return;
+  CO_STEP=n;
+  for(let i=1;i<=3;i++){
+    $('coStep'+i).classList.toggle('hide',i!==n);
+    const b=$('coStepBtn'+i);
+    b.classList.toggle('on',i===n);
+    b.classList.toggle('lock',i>1&&!CO_HAS_SONG);
+    b.classList.toggle('done',CO_HAS_SONG&&i<n);
+  }
+  if(n===2&&ED.score) coEdPaint();
+}
+function coUnlock(){
+  CO_HAS_SONG=true;
+  for(let i=2;i<=3;i++) $('coStepBtn'+i).classList.remove('lock');
+}
+function coSetBrief(text,genre){ $('coBrief').value=text; if(genre) $('coGenre').value=genre; $('coBrief').focus(); }
+
+/* The instrument library IS the "free plugins under 800 MB" step: a scan of the
+   bundled SoundFonts with the budget applied, shown so it's clear what the
+   planner is choosing from and what got excluded. */
+async function coLoadLibrary(){
+  try{
+    const lib=await get('/api/composer_library'); CO_LIB=lib;
+    $('coGenre').innerHTML=(lib.genres||[]).map(g=>`<option value="${g}">${g}</option>`).join('');
+    const nInst=Object.values(lib.instruments||{}).reduce((a,v)=>a+v.length,0);
+    $('coLibSummary').textContent=`Instrument library — ${nInst} instruments, ${(lib.soundfonts||[]).length} SoundFonts`;
+    // Each font is described by the JOB it does. The 800 MB figure governs the
+    // general bank only; a specialist piano library being bigger than that is
+    // not a failure, and calling it "excluded" while the renderer used it was
+    // just wrong.
+    $('coLibList').innerHTML=(lib.soundfonts||[]).map(f=>
+      `<div style="margin-bottom:7px">
+        <div style="display:flex;gap:7px;align-items:baseline">
+          <span>${f.within_budget?'✅':'⛔'}</span><b style="font-weight:600">${coEsc(f.name)}</b>
+          <span class="note" style="margin-left:auto">${f.mb} MB</span></div>
+        <div class="note" style="padding-left:20px">General MIDI bank · used for ${coEsc(f.used_for)} ·
+          ${f.within_budget?'within':'over'} the ${lib.budget_mb} MB budget</div>
+      </div>`).join('') +
+      Object.entries(lib.instruments||{}).map(([g,items])=>
+        `<div style="margin-top:7px"><b style="font-weight:600;text-transform:capitalize">${g.replace(/_/g,' ')}</b>
+         <div class="note">${items.map(i=>coEsc(i.name)).join(' · ')}</div></div>`).join('');
+  }catch(e){
+    $('coLibSummary').textContent='Instrument library — could not read it: '+e.message;
+  }
+}
+
+async function coStart(){
+  const brief=$('coBrief').value.trim();
+  if(!brief && !confirm('No brief given — compose a generic '+$('coGenre').value+' track?')) return;
+  $('coGo').classList.add('hide'); $('coCancel').classList.remove('hide');
+  $('coBarWrap').classList.remove('hide'); $('coBar').style.width='0%';
+  $('coZip').classList.add('hide'); stageBusy('coStage',true);
+  setStatus('coStatus','starting…','run');
+  try{
+    await post('/api/composer_start',{
+      brief, genre:$('coGenre').value, seconds:+$('coSecs').value,
+      tracks:+$('coTracks').value, name:$('coName').value.trim(),
+      key:$('coKey').value, bpm:+$('coBpm').value, seed:+$('coSeed').value,
+      stems:$('coStems').checked, use_llm:$('coUseLlm').checked,
+      humanize:$('coHumanize').checked,
+      polish:$('coPolish').checked, polish_denoise:+$('coPolishDen').value});
+    coPoll();
+  }catch(e){ setStatus('coStatus',e.message,'err'); coDone(); }
+}
+async function coCancel(){ try{ await post('/api/composer_cancel',{}); }catch(e){} }
+function coDone(){
+  $('coGo').classList.remove('hide'); $('coCancel').classList.add('hide');
+  stageBusy('coStage',false);
+}
+async function coPoll(){
+  clearTimeout(coTimer);
+  try{
+    const s=await get('/api/composer_status');
+    const pct=s.total?Math.round((s.step/s.total)*100):0; $('coBar').style.width=pct+'%';
+    if(s.state==='running'){
+      setStatus('coStatus',`${s.step}/${s.total} — ${s.current||'working'}`,'run');
+      coTimer=setTimeout(coPoll,1500); return;
+    }
+    if(s.state==='done'){
+      setStatus('coStatus','✓ '+(s.message||'song complete'),'ok'); $('coBar').style.width='100%';
+      coRender(s);
+      $('coZip').href='/api/composer_zip?name='+encodeURIComponent(s.name);
+      $('coZip').setAttribute('download',s.name+'.zip'); $('coZip').classList.remove('hide');
+      $('coMeta').innerHTML=`<span>saved to <b>compositions/${s.name}</b></span>`;
+      // the finished score becomes the editor's document; notes reload since the
+      // arrangement (and so the generated parts) may have changed
+      ED.notes=null;
+      coEdOpen(s.plan,s.name);
+      coUnlock();
+      coEdSetPlayer(s);
+      // land on Arrange after a fresh compose (you want to shape it next), but
+      // don't yank the user off a step they deliberately navigated to
+      if(CO_STEP===1) coGoStep(2);
+    }
+    else if(s.state==='error'){ setStatus('coStatus','Error: '+s.message,'err'); }
+    else if(s.state==='cancelled'){ setStatus('coStatus','Cancelled','ok'); }
+    coDone();
+  }catch(e){ coTimer=setTimeout(coPoll,3000); }
+}
+
+const CO_ROLE_ICON={drums:'🥁',perc:'🔔',bass:'🎸',chords:'🎹',pad:'🌫',arp:'✨',lead:'🎺',counter:'🎻'};
+function coPanLabel(p){ if(Math.abs(p)<0.05) return 'C'; return (p<0?'L':'R')+Math.round(Math.abs(p)*100); }
+
+function coRender(s){
+  const sc=s.plan; if(!sc) return;
+  $('coEmpty').classList.add('hide'); $('coStage').classList.add('hasresult');
+  $('coOut').classList.remove('hide');
+  const url=f=>'/compositions/'+f.split('/').map(encodeURIComponent).join('/');
+  const files=s.files||[];
+  const polished=files.find(f=>/_polished\.mp3$/i.test(f));
+  const mp3=files.find(f=>/\.mp3$/i.test(f)&&!/_polished\.mp3$/i.test(f));
+  const wav=files.find(f=>/\.wav$/i.test(f)&&!/\/stems\//.test(f));
+  const mid=files.find(f=>/\.mid$/i.test(f)), stems=files.filter(f=>/\/stems\/.+\.(flac|wav)$/i.test(f));
+  const mins=Math.floor((sc.duration||0)/60), secs=Math.round((sc.duration||0)%60);
+  let h='';
+
+  h+=`<div class="spsec"><div class="sphead"><b>${sc.title||'Untitled'}</b>
+      <span class="note">${sc.genre} · ${sc.key} · ${sc.bpm} bpm · ${sc.time_signature}/4 · ${sc.total_bars} bars · ${mins}:${String(secs).padStart(2,'0')}</span></div>
+      ${polished?'<div class="note" style="margin-bottom:3px">clean master — sampled instruments, stems intact</div>':''}
+      ${mp3?`<audio controls style="width:100%" src="${url(mp3)}"></audio>`:''}
+      <div class="sphead" style="margin-top:8px">
+        ${mp3?`<a class="dlbtn" href="${url(mp3)}" download>⬇ MP3</a>`:''}
+        ${wav?`<a class="dlbtn" href="${url(wav)}" download>⬇ WAV</a>`:''}
+        ${mid?`<a class="dlbtn" href="${url(mid)}" download>⬇ Multitrack MIDI</a>`:''}
+      </div>
+      ${polished?`<div style="margin-top:12px">
+        <div class="note" style="margin-bottom:3px">✨ ACE-Step re-texture — matched to the same loudness, so it's a fair A/B</div>
+        <audio controls style="width:100%" src="${url(polished)}"></audio>
+        <div class="sphead" style="margin-top:6px"><a class="dlbtn" href="${url(polished)}" download>⬇ Polished MP3</a></div>
+      </div>`:''}</div>`;
+
+  if(sc.notes) h+=`<div class="spsec"><div class="sphead"><b>Producer's notes</b>
+      <span class="note" style="margin-left:auto">planned by ${sc.planner}</span></div>
+      <div class="card" style="padding:12px;font-size:13px;line-height:1.6">${coEsc(sc.notes)}</div></div>`;
+
+  h+=`<div class="spsec"><div class="sphead"><b>Instruments &amp; mix</b>
+      <span class="note">${(sc.instruments||[]).length} tracks · GM patches from the local SoundFont</span></div>
+      <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead><tr>${['Track','Role','Instrument (GM)','Level','Pan','Rev','Dly','Drv','Automation']
+        .map(x=>`<th style="text-align:left;padding:5px 8px;border-bottom:1px solid var(--edge);white-space:nowrap">${x}</th>`).join('')}</tr></thead><tbody>`;
+  (sc.instruments||[]).forEach(t=>{
+    const auto=(t.automation||[]).map(a=>`${a.param} ${a.mode}${a.section?' ('+coEsc(a.section)+')':''}`).join(', ')||'—';
+    h+=`<tr>
+      <td style="padding:5px 8px;border-bottom:1px solid var(--edge)"><b>${CO_ROLE_ICON[t.role]||'🎵'} ${coEsc(t.track)}</b></td>
+      <td style="padding:5px 8px;border-bottom:1px solid var(--edge)">${t.role}</td>
+      <td style="padding:5px 8px;border-bottom:1px solid var(--edge);white-space:nowrap">${coEsc(t.instrument)}</td>
+      <td style="padding:5px 8px;border-bottom:1px solid var(--edge)">${(+t.level).toFixed(2)}</td>
+      <td style="padding:5px 8px;border-bottom:1px solid var(--edge)">${coPanLabel(+t.pan)}</td>
+      <td style="padding:5px 8px;border-bottom:1px solid var(--edge)">${(+t.reverb).toFixed(2)}</td>
+      <td style="padding:5px 8px;border-bottom:1px solid var(--edge)">${(+t.delay).toFixed(2)}</td>
+      <td style="padding:5px 8px;border-bottom:1px solid var(--edge)">${(+t.drive).toFixed(2)}</td>
+      <td style="padding:5px 8px;border-bottom:1px solid var(--edge)">${auto}</td></tr>`;
+  });
+  h+='</tbody></table></div></div>';
+
+  // structure: one row per section, width proportional to its bars, so the
+  // arrangement reads as a timeline rather than a list
+  h+=`<div class="spsec"><div class="sphead"><b>Arrangement</b><span class="note">energy bar = how loud &amp; busy the mix gets</span></div>`;
+  (sc.sections||[]).forEach(x=>{
+    const pct=Math.round((x.bars/Math.max(sc.total_bars,1))*100);
+    h+=`<div style="margin-bottom:7px">
+      <div style="display:flex;gap:8px;align-items:baseline;font-size:12px">
+        <b style="text-transform:capitalize">${coEsc(x.name)}</b>
+        <span class="note">${x.bars} bars</span>
+        ${(x.fx||[]).map(f=>`<span class="copybtn" style="cursor:default;padding:1px 7px;font-size:11px">${f}</span>`).join('')}
+        <span class="note" style="margin-left:auto">${(x.chord_symbols||[]).join(' · ')}</span></div>
+      <div class="prog" style="height:7px;width:${Math.max(pct,4)}%;min-width:40px;margin:3px 0">
+        <div style="width:${Math.round((x.energy||0)*100)}%"></div></div>
+      <div class="note" style="font-size:11px">${(x.tracks||[]).join(', ')}</div></div>`;
+  });
+  h+='</div>';
+
+  if(stems.length){
+    h+=`<div class="spsec"><div class="sphead"><b>Stems</b><span class="note">post-FX, pre-master — one per instrument</span></div>`;
+    stems.forEach(f=>{ const nm=f.split('/').pop().replace(/\.(flac|wav)$/i,'');
+      h+=`<div style="display:flex;gap:8px;align-items:center;margin-bottom:5px">
+        <b style="font-size:12px;min-width:78px">${coEsc(nm)}</b>
+        <audio controls style="flex:1;height:32px" src="${url(f)}"></audio>
+        <a class="dlbtn" href="${url(f)}" download>⬇</a></div>`; });
+    h+='</div>';
+  }
+
+  if((sc.warnings||[]).length)
+    h+=`<div class="spsec"><div class="chip-info warn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17v.01"/><path d="M10.3 3.9 2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>
+      <span><b>Repaired in the plan:</b><br>${(sc.warnings||[]).map(coEsc).join('<br>')}</span></div></div>`;
+
+  $('coOut').innerHTML=h;
+}
+function coEsc(s){ return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+/* ================= arrangement editor =================
+   The score IS the project file, so the editor edits it directly and re-renders.
+   ED.score is the working copy; ED.saved is what's on disk (for revert). Notes
+   are lazily fetched per track and only become notes_override once you edit
+   them, so an untouched track keeps being freshly composed. */
+let ED={score:null,saved:null,name:null,notes:null,sel:null,selSec:null,dirty:false,roll:null};
+const ED_ROLE_COLOR={drums:'#ef4444',perc:'#f59e0b',bass:'#3b82f6',chords:'#22d3ee',
+                     pad:'#8b5cf6',arp:'#22c55e',lead:'#ec4899',counter:'#a78bfa'};
+
+function coEdOpen(score,name){
+  if(!score||!score.instruments) return;
+  ED.score=JSON.parse(JSON.stringify(score));
+  ED.saved=JSON.parse(JSON.stringify(score));
+  ED.name=name; ED.notes=null; ED.sel=null; ED.selSec=null; ED.dirty=false;
+  $('coEdDirty').classList.add('hide');
+  coEdPaint();
+}
+function coEdMark(){ ED.dirty=true; $('coEdDirty').classList.remove('hide'); }
+/* Step 2 carries its own player: the audio exists as soon as step 1 finishes, and
+   you edit in response to hearing it — waiting until step 3 to listen would be
+   backwards. */
+function coEdSetPlayer(s){
+  const mp3=(s.files||[]).find(f=>/\.mp3$/i.test(f)&&!/_polished\.mp3$/i.test(f));
+  const a=$('coEdAudio');
+  if(mp3){ a.src='/compositions/'+mp3.split('/').map(encodeURIComponent).join('/'); }
+  const sc=s.plan||{};
+  $('coEdNowPlaying').textContent=(sc.title||s.name||'—')+
+    (sc.key?`  ·  ${sc.key} · ${sc.bpm} bpm`:'');
+}
+function coEdReset(){
+  if(ED.dirty&&!confirm('Discard your edits and reload the saved arrangement?')) return;
+  coEdOpen(ED.saved,ED.name);
+}
+function coEdBars(){ return ED.score.sections.reduce((a,s)=>a+s.bars,0)||1; }
+
+function coEdPaint(){
+  const sc=ED.score, total=coEdBars();
+  const secs=sc.sections;
+  $('coEdTitle').textContent=sc.title||'Arrangement';
+  $('coEdInfo').textContent=`${sc.key} · ${sc.bpm} bpm · ${sc.time_signature}/4 · ${total} bars · `+
+    `${sc.instruments.length} tracks`;
+  // section header: width proportional to bars, matching the clip lanes below
+  const w=b=>`flex:0 0 ${Math.max(58,Math.round(b/total*920))}px`;
+  let h=`<div class="coed-secrow"><div class="coed-head"><span class="coed-note">sections →</span></div>`;
+  secs.forEach((s,i)=>{ h+=`<div class="coed-sec ${ED.selSec===i?'sel':''}" style="${w(s.bars)}" onclick="coEdSelSec(${i})">
+      <b>${coEsc(s.name)}</b><span>${s.bars} bars · e${(+s.energy).toFixed(2)}${(s.fx||[]).length?' · '+s.fx.join(','):''}</span></div>`; });
+  h+=`</div>`;
+  sc.instruments.forEach((t,ti)=>{
+    const col=ED_ROLE_COLOR[t.role]||'#6b7280';
+    h+=`<div class="coed-row ${ED.sel===ti?'on':''}">
+      <div class="coed-head">
+        <span class="coed-name" title="${coEsc(t.instrument)}" onclick="coEdSel(${ti})">${coEsc(t.track)}</span>
+        <button class="coed-mini ${t.muted?'act':''}" title="Mute" onclick="coEdMute(${ti})">M</button>
+        <button class="coed-mini" title="Remove track" onclick="coEdDelTrack(${ti})">✕</button>
+      </div><div class="coed-lane">`;
+    secs.forEach((s,si)=>{
+      const on=(s.tracks||[]).indexOf(t.track)>=0;
+      h+=`<div class="coed-clip ${on?'on':''}" style="${w(s.bars)};${on?'background:'+col:''}"
+            title="${coEsc(t.track)} in ${coEsc(s.name)} — click to toggle"
+            onclick="coEdToggle(${ti},${si})">${on?`<span class="lbl">${coEsc(t.track)}</span>`:''}</div>`;
+    });
+    h+=`</div></div>`;
+  });
+  $('coEdGrid').innerHTML=h;
+  coEdInsp();
+}
+
+function coEdToggle(ti,si){
+  const name=ED.score.instruments[ti].track, s=ED.score.sections[si];
+  s.tracks=s.tracks||[];
+  const k=s.tracks.indexOf(name);
+  if(k>=0) s.tracks.splice(k,1); else s.tracks.push(name);
+  coEdMark(); coEdPaint();
+}
+function coEdMute(ti){ const t=ED.score.instruments[ti]; t.muted=!t.muted; coEdMark(); coEdPaint(); }
+function coEdDelTrack(ti){
+  const t=ED.score.instruments[ti];
+  if(!confirm(`Remove the "${t.track}" track from the arrangement?`)) return;
+  ED.score.instruments.splice(ti,1);
+  ED.score.sections.forEach(s=>{ const k=(s.tracks||[]).indexOf(t.track); if(k>=0) s.tracks.splice(k,1); });
+  if(ED.sel===ti) ED.sel=null;
+  coEdMark(); coEdPaint();
+}
+function coEdAddTrack(){
+  const n=prompt('Track name?','new track'); if(!n) return;
+  let name=n.trim().slice(0,24)||'track';
+  while(ED.score.instruments.some(t=>t.track.toLowerCase()===name.toLowerCase())) name+='2';
+  ED.score.instruments.push({track:name,role:'chords',program:0,instrument:'Acoustic Grand Piano',
+    level:0.55,pan:0,reverb:0.3,delay:0,drive:0,tone:'neutral',automation:[],muted:false});
+  ED.score.sections.forEach(s=>{ (s.tracks=s.tracks||[]).push(name); });
+  ED.sel=ED.score.instruments.length-1; coEdMark(); coEdPaint();
+}
+function coEdAddSection(){
+  const src=ED.score.sections[ED.score.sections.length-1]||{bars:8,energy:0.6,chords:[],chord_symbols:[]};
+  ED.score.sections.push({name:'section '+(ED.score.sections.length+1),bars:src.bars,
+    energy:src.energy,tracks:ED.score.instruments.map(t=>t.track),fx:[],
+    chord_symbols:(src.chord_symbols||[]).slice()});
+  ED.selSec=ED.score.sections.length-1; coEdMark(); coEdPaint();
+}
+function coEdSel(ti){ ED.sel=(ED.sel===ti?null:ti); ED.selSec=null; coEdPaint();
+  if(ED.sel!==null) coEdLoadNotes(); }
+function coEdSelSec(si){ ED.selSec=(ED.selSec===si?null:si); ED.sel=null; coEdPaint(); }
+
+const ED_FX=['riser','impact','downlifter','drop','filter_sweep'];
+const ED_ROLES=['drums','perc','bass','chords','pad','arp','lead','counter'];
+const ED_TONES=['neutral','warm','bright','dark','thin'];
+
+function coEdInsp(){
+  const box=$('coEdInsp');
+  if(ED.selSec!==null){ box.innerHTML=coEdSecForm(ED.score.sections[ED.selSec],ED.selSec); return; }
+  if(ED.sel===null){ box.innerHTML=`<span class="coed-note">Click a <b>track name</b> to edit its instrument, mix and notes — or a <b>section</b> to change its bars, energy, chords and FX. Click any clip to toggle whether that track plays there.</span>`; return; }
+  const t=ED.score.instruments[ED.sel];
+  const gm=(CO_LIB&&CO_LIB.gm_all)||null;
+  const instSel=gm?`<select onchange="coEdSetProgram(this.value)">${gm.map((n,i)=>
+      `<option value="${i}" ${i===t.program?'selected':''}>${i} — ${coEsc(n)}</option>`).join('')}</select>`
+    :`<input type="number" min="0" max="127" value="${t.program}" onchange="coEdSetProgram(this.value)">`;
+  box.innerHTML=`
+    <div class="row">
+      <div class="field"><label>Instrument <span class="note">GM patch (drums ignore this)</span></label>${instSel}</div>
+      <div class="field"><label>Role <span class="note">— what the arranger writes for it</span></label>
+        <select onchange="coEdSetField('role',this.value)">${ED_ROLES.map(r=>
+          `<option ${r===t.role?'selected':''}>${r}</option>`).join('')}</select></div>
+      <div class="field"><label>Tone</label>
+        <select onchange="coEdSetField('tone',this.value)">${ED_TONES.map(r=>
+          `<option ${r===t.tone?'selected':''}>${r}</option>`).join('')}</select></div>
+    </div>
+    <div class="coed-knobs">
+      ${coEdKnob('level','Level',t.level,0.05,1.5,0.05)}
+      ${coEdKnob('pan','Pan',t.pan,-1,1,0.05)}
+      ${coEdKnob('reverb','Reverb',t.reverb,0,1,0.05)}
+      ${coEdKnob('delay','Delay',t.delay,0,1,0.05)}
+      ${coEdKnob('drive','Drive',t.drive,0,1,0.05)}
+    </div>
+    <div style="margin-top:9px">
+      <div class="sphead"><b>Automation</b>
+        <button class="copybtn" style="margin-left:auto" onclick="coEdAddAuto()">+ lane</button></div>
+      ${(t.automation||[]).length?(t.automation||[]).map((a,ai)=>coEdAutoRow(a,ai)).join(''):'<span class="coed-note">no automation on this track</span>'}
+    </div>
+    <div style="margin-top:11px">
+      <div class="sphead"><b>Notes</b>
+        <span class="note" id="coRollHint">drag to add · click a note to delete · shift-drag to move</span>
+        ${t.notes_override?'<span class="coed-dirty" style="margin-left:auto">● hand-edited</span>'
+          :'<span class="note" style="margin-left:auto">generated</span>'}
+        ${t.notes_override?'<button class="copybtn" onclick="coEdClearNotes()">↺ regenerate</button>':''}
+      </div>
+      <div class="coroll" id="coRollWrap"><canvas id="coRoll" width="900" height="240"></canvas></div>
+    </div>`;
+  coEdDrawRoll();
+}
+function coEdKnob(k,lab,v,lo,hi,st){
+  return `<div class="coed-knob"><label><span>${lab}</span><span id="coK_${k}">${(+v).toFixed(2)}</span></label>
+    <input type="range" min="${lo}" max="${hi}" step="${st}" value="${v}"
+      oninput="$('coK_${k}').textContent=(+this.value).toFixed(2);coEdSetField('${k}',+this.value,true)"></div>`;
+}
+function coEdAutoRow(a,ai){
+  const params=['cutoff','volume','pan','reverb','delay'], modes=['ramp','autopan','tremolo'];
+  const names=ED.score.sections.map(s=>s.name);
+  return `<div class="row" style="gap:7px;align-items:flex-end;margin-bottom:5px">
+    <div class="field" style="flex:0 0 108px"><label>Param</label><select onchange="coEdSetAuto(${ai},'param',this.value)">
+      ${params.map(p=>`<option ${p===a.param?'selected':''}>${p}</option>`).join('')}</select></div>
+    <div class="field" style="flex:0 0 108px"><label>Mode</label><select onchange="coEdSetAuto(${ai},'mode',this.value)">
+      ${modes.map(m=>`<option ${m===a.mode?'selected':''}>${m}</option>`).join('')}</select></div>
+    ${a.mode==='ramp'?`
+      <div class="field" style="flex:0 0 84px"><label>From</label><input type="number" step="0.05" value="${a.from}" onchange="coEdSetAuto(${ai},'from',+this.value)"></div>
+      <div class="field" style="flex:0 0 84px"><label>To</label><input type="number" step="0.05" value="${a.to}" onchange="coEdSetAuto(${ai},'to',+this.value)"></div>
+      <div class="field" style="flex:1;min-width:120px"><label>Section <span class="note">blank = whole song</span></label>
+        <select onchange="coEdSetAuto(${ai},'section',this.value)"><option value="">(whole song)</option>
+        ${names.map(n=>`<option ${n===a.section?'selected':''}>${coEsc(n)}</option>`).join('')}</select></div>`
+    :`<div class="field" style="flex:0 0 92px"><label>Depth</label><input type="number" step="0.05" value="${a.depth}" onchange="coEdSetAuto(${ai},'depth',+this.value)"></div>
+      <div class="field" style="flex:0 0 92px"><label>Bars</label><input type="number" step="0.5" value="${a.bars}" onchange="coEdSetAuto(${ai},'bars',+this.value)"></div>`}
+    <button class="coed-mini" style="margin-bottom:6px" onclick="coEdDelAuto(${ai})">✕</button></div>`;
+}
+function coEdSecForm(s,si){
+  return `<div class="row">
+      <div class="field"><label>Section name</label><input type="text" value="${coEsc(s.name)}" onchange="coEdSetSec('name',this.value)"></div>
+      <div class="field"><label>Bars — <span id="coS_bars">${s.bars}</span></label>
+        <input type="range" min="2" max="32" step="2" value="${s.bars}" oninput="$('coS_bars').textContent=this.value;coEdSetSec('bars',+this.value,true)"></div>
+      <div class="field"><label>Energy — <span id="coS_en">${(+s.energy).toFixed(2)}</span> <span class="note">drives loudness, kit density &amp; velocity</span></label>
+        <input type="range" min="0" max="1" step="0.05" value="${s.energy}" oninput="$('coS_en').textContent=(+this.value).toFixed(2);coEdSetSec('energy',+this.value,true)"></div>
+    </div>
+    <div class="field"><label>Chords <span class="note">— space or comma separated; loops to fill the section (Am F C G, Cmaj7, Bb/D, V7 …)</span></label>
+      <input type="text" value="${coEsc((s.chord_symbols||[]).join(' '))}" onchange="coEdSetChords(this.value)"></div>
+    <div class="field"><label>Section FX</label><div class="coed-chips">${ED_FX.map(f=>
+      `<span class="coed-chip ${(s.fx||[]).indexOf(f)>=0?'on':''}" onclick="coEdToggleFx('${f}')">${f}</span>`).join('')}</div></div>
+    <div class="sphead" style="margin-top:8px"><span class="coed-note">${(s.tracks||[]).length} of ${ED.score.instruments.length} tracks playing here</span>
+      <button class="copybtn" style="margin-left:auto" onclick="coEdDelSection(${si})">✕ delete section</button></div>`;
+}
+function coEdSetField(k,v,quiet){
+  const t=ED.score.instruments[ED.sel]; t[k]=v;
+  if(k==='program'&&CO_LIB&&CO_LIB.gm_all) t.instrument=CO_LIB.gm_all[v]||t.instrument;
+  coEdMark(); if(!quiet) coEdPaint();
+}
+function coEdSetProgram(v){ const t=ED.score.instruments[ED.sel]; t.program=+v;
+  if(CO_LIB&&CO_LIB.gm_all) t.instrument=CO_LIB.gm_all[+v]||t.instrument; coEdMark(); coEdPaint(); }
+function coEdAddAuto(){ const t=ED.score.instruments[ED.sel];
+  (t.automation=t.automation||[]).push({param:'cutoff',mode:'ramp',from:0.2,to:1.0,depth:0.4,bars:4,section:''});
+  coEdMark(); coEdPaint(); }
+function coEdSetAuto(ai,k,v){ ED.score.instruments[ED.sel].automation[ai][k]=v; coEdMark(); coEdPaint(); }
+function coEdDelAuto(ai){ ED.score.instruments[ED.sel].automation.splice(ai,1); coEdMark(); coEdPaint(); }
+function coEdSetSec(k,v,quiet){ const s=ED.score.sections[ED.selSec]; s[k]=v; coEdMark(); if(!quiet) coEdPaint(); }
+function coEdSetChords(v){
+  const s=ED.score.sections[ED.selSec];
+  s.chord_symbols=v.split(/[\s,]+/).filter(Boolean);
+  delete s.chords;   // let the engine re-parse from the symbols
+  coEdMark(); coEdPaint();
+}
+function coEdToggleFx(f){
+  const s=ED.score.sections[ED.selSec]; s.fx=s.fx||[];
+  const k=s.fx.indexOf(f); if(k>=0) s.fx.splice(k,1); else s.fx.push(f);
+  coEdMark(); coEdPaint();
+}
+function coEdDelSection(si){
+  if(ED.score.sections.length<2){ toast('a song needs at least one section','err'); return; }
+  if(!confirm(`Delete the "${ED.score.sections[si].name}" section?`)) return;
+  ED.score.sections.splice(si,1); ED.selSec=null; coEdMark(); coEdPaint();
+}
+
+/* ---- piano roll ---- */
+async function coEdLoadNotes(){
+  if(ED.notes) { coEdDrawRoll(); return; }
+  try{
+    const j=await get('/api/composer_notes?name='+encodeURIComponent(ED.name));
+    if(j.error) throw new Error(j.error);
+    ED.notes=j; coEdDrawRoll();
+  }catch(e){ const w=$('coRollWrap'); if(w) w.innerHTML='<span class="coed-note" style="padding:8px;display:block">could not load notes: '+coEsc(e.message)+'</span>'; }
+}
+function coEdTrackNotes(){
+  const t=ED.score.instruments[ED.sel]; if(!t) return null;
+  if(t.notes_override) return t.notes_override;
+  return (ED.notes&&ED.notes.notes&&ED.notes.notes[t.track])||null;
+}
+const ROLL={px:9,py:4,lo:24,hi:96};   // px per beat, px per semitone
+function coEdDrawRoll(){
+  const cv=$('coRoll'); if(!cv) return;
+  const t=ED.score.instruments[ED.sel]; const notes=coEdTrackNotes();
+  const bpb=ED.score.time_signature, bars=coEdBars(), beats=bars*bpb;
+  const W=Math.max(900,Math.round(beats*ROLL.px)), rows=ROLL.hi-ROLL.lo, H=rows*ROLL.py;
+  cv.width=W; cv.height=H; cv.style.width=W+'px'; cv.style.height=H+'px';
+  const g=cv.getContext('2d');
+  const css=k=>getComputedStyle(document.documentElement).getPropertyValue(k).trim();
+  g.fillStyle=css('--surface-3')||'#1a1a20'; g.fillRect(0,0,W,H);
+  // black-key rows
+  g.fillStyle='rgba(0,0,0,.22)';
+  for(let p=ROLL.lo;p<ROLL.hi;p++) if([1,3,6,8,10].indexOf(p%12)>=0)
+    g.fillRect(0,(ROLL.hi-1-p)*ROLL.py,W,ROLL.py);
+  // bar lines + section boundaries
+  let acc=0;
+  g.strokeStyle='rgba(255,255,255,.07)'; g.lineWidth=1;
+  for(let b=0;b<=beats;b+=bpb){ g.beginPath(); g.moveTo(b*ROLL.px,0); g.lineTo(b*ROLL.px,H); g.stroke(); }
+  g.strokeStyle='rgba(255,255,255,.30)';
+  ED.score.sections.forEach(s=>{ acc+=s.bars; const x=acc*bpb*ROLL.px;
+    g.beginPath(); g.moveTo(x,0); g.lineTo(x,H); g.stroke(); });
+  if(!notes||!notes.length){
+    g.fillStyle=css('--muted')||'#888'; g.font='12px system-ui';
+    g.fillText(t&&t.muted?'track is muted':'no notes here — drag to draw some',10,18);
+    return;
+  }
+  const col=ED_ROLE_COLOR[t.role]||'#6b7280';
+  notes.forEach(n=>{
+    const [b,d,p,v]=n; if(p<ROLL.lo||p>=ROLL.hi) return;
+    g.fillStyle=col; g.globalAlpha=0.35+0.65*(v/127);
+    g.fillRect(b*ROLL.px,(ROLL.hi-1-p)*ROLL.py,Math.max(2,d*ROLL.px-1),ROLL.py-1);
+  });
+  g.globalAlpha=1;
+}
+function coEdRollXY(ev){
+  const cv=$('coRoll'), r=cv.getBoundingClientRect();
+  return {beat:Math.max(0,(ev.clientX-r.left)/ROLL.px),
+          pitch:Math.round(ROLL.hi-1-(ev.clientY-r.top)/ROLL.py)};
+}
+/* Editing a track's notes freezes them as notes_override — from then on that
+   track replays exactly what you drew instead of being re-composed. */
+function coEdEnsureOverride(){
+  const t=ED.score.instruments[ED.sel];
+  if(!t.notes_override) t.notes_override=JSON.parse(JSON.stringify(coEdTrackNotes()||[]));
+  return t.notes_override;
+}
+function coEdClearNotes(){
+  const t=ED.score.instruments[ED.sel];
+  if(!confirm('Throw away your note edits and let the arranger re-compose this track?')) return;
+  delete t.notes_override; coEdMark(); coEdPaint();
+}
+let ROLLDRAG=null;
+document.addEventListener('mousedown',e=>{
+  if(!e.target||e.target.id!=='coRoll') return;
+  const p=coEdRollXY(e); const notes=coEdEnsureOverride();
+  const hit=notes.findIndex(n=>n[2]===p.pitch&&p.beat>=n[0]&&p.beat<=n[0]+n[1]);
+  if(hit>=0&&!e.shiftKey){ notes.splice(hit,1); coEdMark(); coEdDrawRoll(); return; }
+  const snap=Math.floor(p.beat*4)/4;                       // 16th grid
+  if(hit>=0&&e.shiftKey){ ROLLDRAG={mode:'move',i:hit,ox:p.beat-notes[hit][0],op:p.pitch}; return; }
+  notes.push([snap,0.25,p.pitch,96]);
+  ROLLDRAG={mode:'len',i:notes.length-1,start:snap};
+  coEdMark(); coEdDrawRoll(); e.preventDefault();
+});
+document.addEventListener('mousemove',e=>{
+  if(!ROLLDRAG) return;
+  const notes=ED.score.instruments[ED.sel].notes_override; if(!notes) return;
+  const p=coEdRollXY(e), n=notes[ROLLDRAG.i]; if(!n) return;
+  if(ROLLDRAG.mode==='len') n[1]=Math.max(0.0625,Math.round((p.beat-ROLLDRAG.start)*4)/4||0.25);
+  else { n[0]=Math.max(0,Math.round((p.beat-ROLLDRAG.ox)*4)/4); n[2]=p.pitch; }
+  coEdDrawRoll();
+});
+document.addEventListener('mouseup',()=>{ if(ROLLDRAG){ ROLLDRAG=null; coEdPaint(); } });
+
+async function coEdRerender(){
+  if(!ED.score) return;
+  $('coEdRender').disabled=true;
+  setStatus('coStatus','re-rendering your edits…','run');
+  $('coBarWrap').classList.remove('hide'); $('coBar').style.width='0%';
+  stageBusy('coStage',true);
+  try{
+    await post('/api/composer_rerender',{name:ED.name,score:ED.score,
+      stems:$('coStems').checked,polish:$('coPolish').checked,
+      polish_denoise:+$('coPolishDen').value});
+    ED.dirty=false; $('coEdDirty').classList.add('hide');
+    coPoll();
+  }catch(e){ setStatus('coStatus',e.message,'err'); }
+  finally{ $('coEdRender').disabled=false; }
+}
+
+coSecsLabel();
+coLoadLibrary();
+/* a composition survives a page refresh: reattach to a running/finished job */
+get('/api/composer_status').then(s=>{ if(s.state==='running'||s.plan) coPoll(); }).catch(()=>{});
+
 /* ---- Music (ACE-Step) ---- */
 function muAddTags(t){ const el=$('muTags'); const cur=el.value.trim(); el.value = cur ? (cur.replace(/,\s*$/,'')+', '+t) : t; el.focus(); }
 function muInsert(marker){ const el=$('muLyrics'); const p=el.selectionStart??el.value.length;
@@ -4646,6 +11834,354 @@ async function abRefreshStories(){
     if(cur) sel.value=cur;
   }catch(e){}
 }
+/* ---------------- Lullaby Studio ---------------- */
+let lbTimer=null, LB_MODE='remix';
+function lbSetMode(m){
+  LB_MODE=m;
+  document.querySelectorAll('#lbModeSeg button').forEach(b=>b.classList.toggle('active',b.dataset.mode===m));
+  $('lbRemixCtl').classList.toggle('hide',m!=='remix');
+  $('lbPianoCtl').classList.toggle('hide',m!=='piano');
+  $('lbMelodyCtl').classList.toggle('hide',m!=='melody-match');
+  document.querySelectorAll('#lbStems .mmRoute').forEach(el=>el.classList.toggle('hide',m!=='melody-match'));
+}
+// Melody Match only: split the ticked Tracks-panel stems into two groups by
+// each row's Route selector — 'melody' stems get mixed and traced onto the
+// chosen instrument, 'arranged' stems instead go through the Piano engine's
+// own transcribe+quantize+rebuild pipeline, then both are mixed together.
+function lbMelodyRouting(){
+  const solo={}, arranged={};
+  document.querySelectorAll('#lbStems [data-stem]').forEach(row=>{
+    if(!row.querySelector('input[type=checkbox]').checked) return;
+    const level=+row.querySelector('input[type=range]').value;
+    const route=row.querySelector('.mmRouteSel').value;
+    (route==='arranged'?arranged:solo)[row.dataset.stem]=level;
+  });
+  return {solo, arranged};
+}
+let LB_NAME=null;
+function lbFileChange(){
+  const f=$('lbFile').files[0];
+  document.querySelector('#lbFile + .filedrop-name').textContent = f ? f.name : '';
+  LB_NAME=null; $('lbWorkbench').classList.add('hide'); $('lbRenderBtn').classList.add('hide');
+  $('lbAnalyzeBtn').classList.remove('hide'); setStatus('lbStatus','','');
+}
+async function lbAnalyze(){
+  const f=$('lbFile').files[0];
+  if(!f){ setStatus('lbStatus','choose a song file first','err'); return; }
+  if(f.size > 80*1024*1024){ setStatus('lbStatus','file too big (80MB max) — use an mp3 instead','err'); return; }
+  const audio=await fileB64($('lbFile'));
+  $('lbAnalyzeBtn').disabled=true; $('lbBarWrap').classList.remove('hide');
+  $('lbFiles').innerHTML=''; $('lbEmpty').classList.add('hide'); $('lbBar').style.width='0%';
+  setStatus('lbStatus','uploading & analyzing…','run');
+  try{ await post('/api/lullaby_analyze',{audio, filename:f.name}); lbPoll(); }
+  catch(e){ setStatus('lbStatus',e.message,'err'); $('lbAnalyzeBtn').disabled=false; }
+}
+async function lbRender(){
+  if(!LB_NAME){ setStatus('lbStatus','analyze a song first','err'); return; }
+  $('lbRenderBtn').disabled=true; $('lbBarWrap').classList.remove('hide');
+  $('lbFiles').innerHTML=''; $('lbBar').style.width='0%';
+  setStatus('lbStatus','starting render…','run');
+  const tempo = LB_MODE==='melody-match' ? +$('lbMelodyTempo').value : +$('lbTempo').value;
+  const routing = LB_MODE==='melody-match' ? lbMelodyRouting() : {solo:lbStemWeights(), arranged:null};
+  const polish = LB_MODE==='melody-match' ? $('lbMelodyPolish').checked : $('lbPolish').checked;
+  try{ await post('/api/lullaby_render',{name:LB_NAME, mode:LB_MODE,
+        stems:routing.solo, arranged_stems:routing.arranged, focus:$('lbFocus').value,
+        denoise:+$('lbSoft').value, slowdown:+$('lbSlow').value, tempo,
+        instrument:$('lbInstrument').value, polish}); lbPoll(); }
+  catch(e){ setStatus('lbStatus',e.message,'err'); $('lbRenderBtn').disabled=false; }
+}
+async function lbPoll(){
+  try{
+    const s=await get('/api/lullaby_status');
+    const pct=s.total?Math.round((s.step/s.total)*100):0; $('lbBar').style.width=pct+'%';
+    if(s.state==='running'){ setStatus('lbStatus',`Stage ${s.step}/${s.total} — ${s.current||'starting'}`,'run'); }
+    else if(s.state==='error'){ setStatus('lbStatus','Error: '+s.message,'err'); }
+    else if(s.state==='done' && s.phase==='analyze'){
+      setStatus('lbStatus','✓ Analyzed — pick your tracks and an engine, then render','ok');
+      $('lbBar').style.width='100%'; LB_NAME=s.name; await lbLoadInfo();
+    }
+    else if(s.state==='done'){ setStatus('lbStatus','✓ Lullaby complete','ok'); $('lbBar').style.width='100%'; }
+    lbRenderFiles(s.files||[]);
+    if(s.state==='running'){ lbTimer=setTimeout(lbPoll,2000); return; }
+    $('lbAnalyzeBtn').disabled=false; $('lbRenderBtn').disabled=false;
+  }catch(e){ lbTimer=setTimeout(lbPoll,3000); }
+}
+const LB_STEM_DEFAULTS={vocals:1, guitar:1, piano:1, other:1, bass:0, drums:0};
+function lbStemWeights(){
+  const w={};
+  document.querySelectorAll('#lbStems [data-stem]').forEach(row=>{
+    const on=row.querySelector('input[type=checkbox]').checked;
+    w[row.dataset.stem]=on ? +row.querySelector('input[type=range]').value : 0;
+  });
+  return w;
+}
+async function lbLoadInfo(){
+  const info=await get('/api/lullaby_info?name='+encodeURIComponent(LB_NAME));
+  $('lbSummary').textContent=`${info.key} · ${info.tempo} bpm · ${info.bars.length} bars`;
+  // unhide FIRST so clientWidth-based canvas sizing below measures real layout,
+  // not a display:none parent (that 0-width readout was forcing a hardcoded
+  // 600px fallback, which flex items can't shrink below — the row then
+  // overflowed the sidebar and visually spilled under the output panel)
+  $('lbWorkbench').classList.remove('hide');
+  lbDrawWave($('lbWave'), info.waveform, info.bars);
+  const sbox=$('lbStems'); sbox.innerHTML='';
+  for(const [name,st] of Object.entries(info.stems||{})){
+    const def=LB_STEM_DEFAULTS[name]!==undefined?LB_STEM_DEFAULTS[name]:1;
+    const checkboxHtml=`<input type="checkbox" ${def>0?'checked':''} style="width:auto;flex:0 0 auto"
+      onchange="this.closest('[data-stem]').style.opacity=this.checked?1:.45">`;
+    const row=lbBuildScrubRow(name, st.preview, '#lbStems audio', checkboxHtml);
+    row.insertAdjacentHTML('beforeend', `
+      <div style="display:flex;align-items:center;gap:8px">
+        <span class="note" style="flex:0 0 auto">Level</span>
+        <input type="range" min="0" max="1" step="0.05" value="${def}" style="flex:1"
+               title="level carried into the lullaby"
+               oninput="this.nextElementSibling.textContent=Math.round(this.value*100)+'%'">
+        <span class="note" style="flex:0 0 auto;width:34px;text-align:right">${Math.round(def*100)}%</span>
+      </div>
+      <div class="mmRoute hide" style="display:flex;align-items:center;gap:8px">
+        <span class="note" style="flex:0 0 auto">Route</span>
+        <select class="mmRouteSel" style="flex:1">
+          <option value="melody" ${name==='vocals'?'selected':''}>→ Melody Match (traced onto the instrument)</option>
+          <option value="arranged" ${name!=='vocals'?'selected':''}>→ Piano arrangement (rebuilt, quantized)</option>
+        </select>
+      </div>`);
+    if(def<=0) row.style.opacity=.45;
+    sbox.appendChild(row);
+    // workbench is already unhidden above, so clientWidth is a real measurement
+    // here — no more falling back to a hardcoded width that overflowed the column
+    lbFinishScrubRow(row, st.peaks||[], '#lbStems audio');
+  }
+  $('lbRenderBtn').classList.remove('hide');
+  $('lbAnalyzeBtn').classList.add('hide');
+}
+// Shared scrubbable stem-player builder — used by the Lullaby Tracks panel
+// and the Track Splitter tab. headerExtraHtml slots in a control between the
+// name and play button (e.g. the Lullaby include-checkbox); pass '' for none.
+// Caller must append `row` to the DOM, add whatever belongs below the
+// waveform (slider / download link), THEN call lbFinishScrubRow — the canvas
+// needs real layout before it can size itself.
+function lbBuildScrubRow(name, previewUrl, pauseSelector, headerExtraHtml){
+  const row=document.createElement('div');
+  row.className='card'; row.dataset.stem=name;
+  row.style.cssText='padding:10px;gap:7px';
+  row.innerHTML=`
+    <div style="display:flex;align-items:center;gap:8px;min-width:0">
+      ${headerExtraHtml||''}
+      <b style="flex:0 0 auto;text-transform:capitalize;font-size:13px">${name}</b>
+      <button type="button" class="rec scrubplay" style="flex:0 0 auto;margin-left:auto">▶</button>
+    </div>
+    <canvas height="72" style="width:100%;border-radius:6px;background:rgba(255,255,255,.04);cursor:pointer;touch-action:none"></canvas>
+    <audio preload="metadata" src="${previewUrl}"></audio>`;
+  const audio=row.querySelector('audio');
+  row.querySelector('.scrubplay').onclick=()=>{
+    if(audio.paused){
+      document.querySelectorAll(pauseSelector).forEach(x=>{ if(x!==audio) x.pause(); });
+      audio.play().catch(()=>{});
+    } else audio.pause();
+  };
+  return row;
+}
+function lbFinishScrubRow(row, peaks, pauseSelector){
+  const cv=row.querySelector('canvas'), audio=row.querySelector('audio');
+  cv.width=Math.max(1,cv.clientWidth)*2;
+  lbWireStemScrub(cv, audio, peaks, pauseSelector);
+}
+function lbWireStemScrub(cv, audio, peaks, pauseSelector){
+  pauseSelector = pauseSelector || '#lbStems audio';
+  const g=cv.getContext('2d');
+  function draw(){
+    const W=cv.width, H=cv.height;
+    g.clearRect(0,0,W,H);
+    const n=peaks.length, mx=Math.max(...peaks,0.01)||0.01;
+    const barW=Math.max(1,W/n-1);
+    // played portion in a brighter shade so scrubbed position reads at a glance
+    const playedX=(audio.duration && isFinite(audio.duration))
+      ? (audio.currentTime/audio.duration)*W : 0;
+    for(let i=0;i<n;i++){
+      const x=i/n*W;
+      const h=Math.max(2,(peaks[i]/mx)*(H-8));
+      g.fillStyle = x<playedX ? 'rgba(200,210,255,.85)' : 'rgba(160,175,255,.5)';
+      g.fillRect(x,(H-h)/2,barW,h);
+    }
+    if(playedX>0){
+      g.fillStyle='#fff';
+      g.fillRect(Math.max(0,playedX-1.5),0,3,H);
+    }
+  }
+  let raf=null;
+  function loop(){ draw(); if(!audio.paused) raf=requestAnimationFrame(loop); }
+  audio.addEventListener('play',()=>{ if(raf) cancelAnimationFrame(raf); loop(); });
+  audio.addEventListener('pause',draw);
+  audio.addEventListener('seeked',draw);
+  audio.addEventListener('loadedmetadata',draw);
+  function seekTo(evt){
+    const rect=cv.getBoundingClientRect();
+    const frac=Math.min(1,Math.max(0,(evt.clientX-rect.left)/rect.width));
+    if(audio.duration && isFinite(audio.duration)) audio.currentTime=frac*audio.duration;
+    draw();
+  }
+  cv.style.cursor='pointer';
+  // pointer capture: once the drag starts on the canvas, this element keeps
+  // receiving move/up events even if the cursor leaves it — no window-level
+  // listeners needed, and it behaves correctly on touch devices too
+  cv.addEventListener('pointerdown',e=>{
+    cv.setPointerCapture(e.pointerId);
+    document.querySelectorAll(pauseSelector).forEach(x=>{ if(x!==audio) x.pause(); });
+    seekTo(e);
+    audio.play().catch(()=>{});
+  });
+  cv.addEventListener('pointermove',e=>{ if(e.buttons & 1) seekTo(e); });
+  draw();
+}
+// Play the checked tracks in a scrub-row container together, roughly in sync
+// (shared by the Lullaby Tracks panel and Track Splitter). Re-derives "is
+// anything playing" fresh on every click, so it self-corrects even if a
+// row's own solo ▶ button paused the rest of the synced set in the meantime.
+let SYNCPLAY_TIMER=null;
+function playAllSelected(containerSel, btn){
+  const rows=[...document.querySelectorAll(containerSel+' [data-stem]')];
+  const all=rows.map(row=>({audio:row.querySelector('audio'), cb:row.querySelector('input[type=checkbox]')}))
+                .filter(r=>r.audio);
+  if(SYNCPLAY_TIMER){ clearInterval(SYNCPLAY_TIMER); SYNCPLAY_TIMER=null; }
+  if(all.some(r=>!r.audio.paused)){
+    all.forEach(r=>r.audio.pause());
+    btn.textContent='▶ Play all selected';
+    return;
+  }
+  const selected=all.filter(r=>!r.cb||r.cb.checked).map(r=>r.audio);
+  if(!selected.length) return;
+  const t=selected[0].currentTime||0;
+  selected.forEach(a=>{ a.currentTime=t; });
+  Promise.all(selected.map(a=>a.play().catch(()=>{})));
+  btn.textContent='⏸ Stop';
+  SYNCPLAY_TIMER=setInterval(()=>{
+    if(selected.every(a=>a.paused||a.ended)){
+      clearInterval(SYNCPLAY_TIMER); SYNCPLAY_TIMER=null; btn.textContent='▶ Play all selected'; return;
+    }
+    const ref=selected[0].currentTime;
+    selected.forEach(a=>{ if(a!==selected[0]&&!a.paused&&Math.abs(a.currentTime-ref)>0.15) a.currentTime=ref; });
+  },1000);
+}
+
+/* ---------------- Track Splitter ---------------- */
+let SP_FORMAT='mp3', splTimer=null;
+function spFileChange(){
+  const f=$('spFile').files[0];
+  document.querySelector('#spFile + .filedrop-name').textContent = f ? f.name : '';
+}
+function spSetFormat(fmt){
+  SP_FORMAT=fmt;
+  document.querySelectorAll('#spFormatSeg button').forEach(b=>b.classList.toggle('active',b.dataset.fmt===fmt));
+}
+async function spSplit(){
+  const f=$('spFile').files[0];
+  if(!f){ setStatus('splStatus','choose a song file first','err'); return; }
+  if(f.size > 80*1024*1024){ setStatus('splStatus','file too big (80MB max) — use an mp3 instead','err'); return; }
+  const audio=await fileB64($('spFile'));
+  $('spGoBtn').disabled=true; $('splBarWrap').classList.remove('hide');
+  $('spTracks').innerHTML=''; $('splEmpty').classList.add('hide'); $('splBar').style.width='0%';
+  $('spZipBtn').classList.add('hide'); $('spPlayAllBtn').classList.add('hide');
+  setStatus('splStatus','uploading & splitting…','run');
+  try{ await post('/api/split_start',{audio, filename:f.name, format:SP_FORMAT}); splPoll(); }
+  catch(e){ setStatus('splStatus',e.message,'err'); $('spGoBtn').disabled=false; }
+}
+async function splPoll(){
+  try{
+    const s=await get('/api/split_status');
+    const pct=s.total?Math.round((s.step/s.total)*100):0; $('splBar').style.width=pct+'%';
+    if(s.state==='running'){ setStatus('splStatus',`Stage ${s.step}/${s.total} — ${s.current||'starting'}`,'run'); }
+    else if(s.state==='done'){
+      setStatus('splStatus','✓ Tracks saved','ok'); $('splBar').style.width='100%';
+      await spLoadResults(s.name, s.files||[]);
+      spRefreshLibrary();
+    }
+    else if(s.state==='error'){ setStatus('splStatus','Error: '+s.message,'err'); }
+    if(s.state==='running'){ splTimer=setTimeout(splPoll,2000); return; }
+    $('spGoBtn').disabled=false;
+  }catch(e){ splTimer=setTimeout(splPoll,3000); }
+}
+async function spLoadResults(name, files){
+  let info={};
+  try{ info=await get('/api/lullaby_info?name='+encodeURIComponent(name)); }catch(e){}
+  const stems=info.stems||{};
+  const order=['vocals','guitar','piano','other','bass','drums'];
+  const sorted=[...files].sort((a,b)=>order.indexOf(a.split('.')[0])-order.indexOf(b.split('.')[0]));
+  const box=$('spTracks'); box.innerHTML='';
+  for(const fname of sorted){
+    const stem=fname.split('.')[0];
+    const st=stems[stem];
+    // prefer the pre-computed preview+peaks from the shared analysis cache
+    // (faster to load, has a real waveform); fall back to the saved file
+    // itself if that cache is missing — still scrubbable via Range support
+    const preview = st ? st.preview : `/splits/${encodeURIComponent(name)}/${fname}`;
+    const checkboxHtml=`<input type="checkbox" checked title="include in Play all selected" style="width:auto;flex:0 0 auto">`;
+    const row=lbBuildScrubRow(stem, preview, '#spTracks audio', checkboxHtml);
+    const dlUrl=`/splits/${encodeURIComponent(name)}/${fname}`;
+    row.insertAdjacentHTML('beforeend',
+      `<a class="rec" style="text-decoration:none;text-align:center" href="${dlUrl}" download>⬇ ${fname}</a>`);
+    box.appendChild(row);
+    lbFinishScrubRow(row, (st&&st.peaks)||[], '#spTracks audio');
+  }
+  $('spZipBtn').href='/api/split_zip?name='+encodeURIComponent(name);
+  $('spZipBtn').classList.remove('hide');
+  $('spPlayAllBtn').classList.remove('hide');
+}
+async function spRefreshLibrary(){
+  try{
+    const j=await get('/api/split_list');
+    const sel=$('spLibrary'); const cur=sel.value;
+    sel.innerHTML='<option value="">— pick a previous split —</option>'+
+      (j.splits||[]).map(s=>`<option value="${s.name}">${s.name}</option>`).join('');
+    if(cur) sel.value=cur;
+  }catch(e){}
+}
+async function spOpenLibrary(){
+  const name=$('spLibrary').value;
+  if(!name) return;
+  try{
+    const j=await get('/api/split_list');
+    const entry=(j.splits||[]).find(s=>s.name===name);
+    if(!entry) return;
+    setStatus('splStatus','',''); $('splEmpty').classList.add('hide');
+    await spLoadResults(name, entry.files||[]);
+  }catch(e){ setStatus('splStatus',e.message,'err'); }
+}
+
+function lbDrawWave(cv, wf, bars){
+  const W=cv.width=cv.clientWidth*2, H=cv.height, g=cv.getContext('2d');
+  g.clearRect(0,0,W,H);
+  if(!wf||!wf.peaks) return;
+  const dur=wf.duration, peaks=wf.peaks, n=peaks.length, mx=Math.max(...peaks,0.01);
+  const waveH=H-26;
+  g.fillStyle='rgba(160,175,255,.55)';
+  for(let i=0;i<n;i++){
+    const h=Math.max(2,(peaks[i]/mx)*waveH);
+    g.fillRect(i/n*W, (waveH-h)/2+2, Math.max(1,W/n-1), h);
+  }
+  // chord strip: alternating blocks labeled with the detected chord per bar
+  (bars||[]).forEach((b,i)=>{
+    const x0=b.start/dur*W;
+    const x1=(bars[i+1]?bars[i+1].start:dur)/dur*W;
+    g.fillStyle=i%2?'rgba(150,170,255,.16)':'rgba(150,170,255,.08)';
+    g.fillRect(x0,waveH+4,x1-x0,20);
+    if(x1-x0>26){ g.fillStyle='rgba(230,235,255,.75)'; g.font='11px system-ui';
+      g.fillText(b.chord,x0+4,waveH+18); }
+  });
+}
+function lbRenderFiles(files){
+  const box=$('lbFiles'); if(!files.length){ box.innerHTML=''; return; }
+  box.innerHTML=files.map(f=>{
+    const url='/lullabies/'+f.split('/').map(encodeURIComponent).join('/');
+    const name=f.split('/').pop();
+    const isMp3=/\.mp3$/i.test(name);
+    return `<div class="card" style="padding:12px;gap:8px">
+      <div style="display:flex;align-items:center;gap:8px"><b style="font-size:13px">${isMp3?'🎹 ':'💾 '}${name}</b>
+        <a class="rec" style="margin-left:auto;flex:0 0 auto;text-decoration:none" href="${url}" download>⬇</a></div>
+      ${isMp3?`<audio controls style="width:100%" src="${url}"></audio>`:''}
+    </div>`;
+  }).join('');
+}
+
 function abLoadFile(){
   const f=$('abFile').files[0]; if(!f) return;
   const r=new FileReader(); r.onload=()=>{ $('abText').value=r.result; if(!$('abTitle').value) $('abTitle').value=f.name.replace(/\.(txt|md)$/i,''); }; r.readAsText(f);
@@ -4798,6 +12334,7 @@ $('vcName').addEventListener('input', updateTrainBtn);
 loadVoices();
 wireDrops();
 abEngineChange(); abRefreshStories(); abLoadRefs();
+spRefreshLibrary();
 document.documentElement.style.setProperty('--viewtone','var(--hue-home)');
 document.querySelectorAll('#imgAspects button').forEach(b=>b.addEventListener('click',()=>{
   $('imgSize').value=b.dataset.ar;
@@ -5126,7 +12663,7 @@ STORY=stBlank(); stRenderAll(); stRefreshList();
 </html>
 ```
 
-## File 3 of 23 — `%USERPROFILE%\local-ai-studio\studio_gui.pyw`
+## File 7 of 27 — `%USERPROFILE%\local-ai-studio\studio_gui.pyw`
 
 ```python
 #!/usr/bin/env python3
@@ -5694,7 +13231,7 @@ if __name__ == "__main__":
     main()
 ```
 
-## File 4 of 23 — `%USERPROFILE%\local-ai-studio\studioctl.ps1`
+## File 8 of 27 — `%USERPROFILE%\local-ai-studio\studioctl.ps1`
 
 ```powershell
 <#
@@ -6042,7 +13579,7 @@ switch ($Command) {
 exit $script:Failures
 ```
 
-## File 5 of 23 — `%USERPROFILE%\local-ai-studio\studio.cmd`
+## File 9 of 27 — `%USERPROFILE%\local-ai-studio\studio.cmd`
 
 ```bat
 @echo off
@@ -6058,7 +13595,7 @@ REM   studio monitor          live refreshing report
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0studioctl.ps1" %*
 ```
 
-## File 6 of 23 — `%USERPROFILE%\local-ai-studio\Studio Control Panel.cmd`
+## File 10 of 27 — `%USERPROFILE%\local-ai-studio\Studio Control Panel.cmd`
 
 ```bat
 @echo off
@@ -6090,7 +13627,7 @@ pause
 :done
 ```
 
-## File 7 of 23 — `%USERPROFILE%\local-ai-studio\Studio Control Panel.vbs`
+## File 11 of 27 — `%USERPROFILE%\local-ai-studio\Studio Control Panel.vbs`
 
 ```vbs
 ' Launch the Local AI Studio visual control panel (studio_gui.pyw) with NO console
@@ -6126,7 +13663,7 @@ MsgBox "Could not find a Python with tkinter installed." & vbCrLf & _
        "Tried the ComfyUI venvs and the conda envs.", 48, "Local AI Studio"
 ```
 
-## File 8 of 23 — `%USERPROFILE%\Documents\ComfyUI\custom_nodes\ram_websocket_save.py`
+## File 12 of 27 — `%USERPROFILE%\Documents\ComfyUI\custom_nodes\ram_websocket_save.py`
 
 ```python
 """RAM-only image output for the Local AI Studio.
@@ -6176,7 +13713,7 @@ NODE_CLASS_MAPPINGS = {"SaveImageWebsocket": SaveImageWebsocket}
 NODE_DISPLAY_NAME_MAPPINGS = {"SaveImageWebsocket": "Save Image (Websocket · RAM-only)"}
 ```
 
-## File 9 of 23 — `%USERPROFILE%\Documents\ComfyUI\custom_nodes\ace15_studio_encode.py`
+## File 13 of 27 — `%USERPROFILE%\Documents\ComfyUI\custom_nodes\ace15_studio_encode.py`
 
 ```python
 """AceStep15StudioEncode: TextEncodeAceStepAudio1.5 with optional musical metas.
@@ -6233,7 +13770,7 @@ NODE_CLASS_MAPPINGS = {"AceStep15StudioEncode": AceStep15StudioEncode}
 NODE_DISPLAY_NAME_MAPPINGS = {"AceStep15StudioEncode": "TextEncode ACE-Step 1.5 (studio, auto metas)"}
 ```
 
-## File 10 of 23 — `%USERPROFILE%\.claude\skills\local-llm\SKILL.md`
+## File 14 of 27 — `%USERPROFILE%\.claude\skills\local-llm\SKILL.md`
 
 ````markdown
 ---
@@ -6283,7 +13820,7 @@ The script prints only the model's text reply to stdout (errors to stderr, non-z
   if you want max coding quality later.
 ````
 
-## File 11 of 23 — `%USERPROFILE%\.claude\skills\local-llm\scripts\ask.py`
+## File 15 of 27 — `%USERPROFILE%\.claude\skills\local-llm\scripts\ask.py`
 
 ```python
 #!/usr/bin/env python3
@@ -6427,7 +13964,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-## File 12 of 23 — `%USERPROFILE%\.claude\skills\local-image\SKILL.md`
+## File 16 of 27 — `%USERPROFILE%\.claude\skills\local-image\SKILL.md`
 
 ````markdown
 ---
@@ -6494,7 +14031,7 @@ Reuse the bundled `image-gen` skill's `cutout.py` (rembg) for alpha cutout:
 - First generation loads ~11GB of weights; subsequent ones are fast. Free Ollama VRAM before generating.
 ````
 
-## File 13 of 23 — `%USERPROFILE%\.claude\skills\local-image\scripts\gen.py`
+## File 17 of 27 — `%USERPROFILE%\.claude\skills\local-image\scripts\gen.py`
 
 ```python
 #!/usr/bin/env python3
@@ -6848,7 +14385,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-## File 14 of 23 — `%USERPROFILE%\.claude\skills\local-music\scripts\musicgen.py`
+## File 18 of 27 — `%USERPROFILE%\.claude\skills\local-music\scripts\musicgen.py`
 
 ```python
 #!/usr/bin/env python3
@@ -7174,7 +14711,7 @@ if __name__ == "__main__":
     sys.exit(main())
 ```
 
-## File 15 of 23 — `%USERPROFILE%\.claude\skills\local-stt\SKILL.md`
+## File 19 of 27 — `%USERPROFILE%\.claude\skills\local-stt\SKILL.md`
 
 ````markdown
 ---
@@ -7207,7 +14744,7 @@ with ffmpeg if available (else convert first: `ffmpeg -i in.mp3 -ar 16000 -ac 1 
 - Requires the `nemo-asr` conda env (NVIDIA NeMo + CUDA torch). The transcript is the LAST stdout line.
 ````
 
-## File 16 of 23 — `%USERPROFILE%\.claude\skills\local-stt\scripts\transcribe.py`
+## File 20 of 27 — `%USERPROFILE%\.claude\skills\local-stt\scripts\transcribe.py`
 
 ```python
 #!/usr/bin/env python3
@@ -7338,7 +14875,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-## File 17 of 23 — `%USERPROFILE%\.claude\skills\local-tts\SKILL.md`
+## File 21 of 27 — `%USERPROFILE%\.claude\skills\local-tts\SKILL.md`
 
 ````markdown
 ---
@@ -7378,7 +14915,7 @@ Writes a wav to `--out` (default `tts_out.wav`) and prints its path to stdout.
   `pkg_resources`, which the Perth watermarker needs) and installed the cu124 torch build for GPU.
 ````
 
-## File 18 of 23 — `%USERPROFILE%\.claude\skills\local-tts\scripts\speak.py`
+## File 22 of 27 — `%USERPROFILE%\.claude\skills\local-tts\scripts\speak.py`
 
 ```python
 #!/usr/bin/env python3
@@ -7556,7 +15093,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-## File 19 of 23 — `%USERPROFILE%\.claude\skills\local-tts\scripts\voicechange.py`
+## File 23 of 27 — `%USERPROFILE%\.claude\skills\local-tts\scripts\voicechange.py`
 
 ```python
 #!/usr/bin/env python3
@@ -7653,7 +15190,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-## File 20 of 23 — `%USERPROFILE%\.claude\skills\local-voice\scripts\xtts_train.py`
+## File 24 of 27 — `%USERPROFILE%\.claude\skills\local-voice\scripts\xtts_train.py`
 
 ```python
 #!/usr/bin/env python3
@@ -7798,7 +15335,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-## File 21 of 23 — `%USERPROFILE%\.claude\skills\local-voice\scripts\xtts_infer.py`
+## File 25 of 27 — `%USERPROFILE%\.claude\skills\local-voice\scripts\xtts_infer.py`
 
 ```python
 #!/usr/bin/env python3
@@ -7902,7 +15439,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-## File 22 of 23 — `%USERPROFILE%\.claude\skills\local-voice\scripts\scripts.json`
+## File 26 of 27 — `%USERPROFILE%\.claude\skills\local-voice\scripts\scripts.json`
 
 ```json
 [
@@ -7949,7 +15486,7 @@ if __name__ == "__main__":
 ]
 ```
 
-## File 23 of 23 — `%USERPROFILE%\.claude\skills\local-tts\scripts\zonos_tts.py`
+## File 27 of 27 — `%USERPROFILE%\.claude\skills\local-tts\scripts\zonos_tts.py`
 
 ```python
 #!/usr/bin/env python3

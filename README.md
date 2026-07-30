@@ -25,7 +25,10 @@ That's still the spirit of the project: give an AI (or yourself) a local set of 
 | 🧠 **Language** | Code / research / vision prompts to a local LLM, with a 🔓 Unlocked (uncensored) option | Ollama |
 | 🎨 **Image — Generate** | Text → image (FLUX.2 Klein) | ComfyUI |
 | ✂️ **Image — Edit** | Reference-guided edit / remove / reframe / outpaint | ComfyUI |
-| 🎵 **Music** | Full songs & instrumentals from style tags + lyrics (ACE-Step 1.5 XL) — structure/vocal/energy lyric tags, BPM/Key/time-signature control, remix mode | ComfyUI |
+| 🕹️ **Sprite Studio** | One reference image → style-matched 2D game sprites: single actions or a full animation set (idle/walk/run/jump/fall/crouch/attack/hurt/death), true transparent backgrounds, per-action strips + combined sprite sheet with engine-ready JSON metadata, per-frame re-roll | ComfyUI + rembg |
+| 🎵 **Music Generation** | Full songs & instrumentals from style tags + lyrics (ACE-Step 1.5 XL) — structure/vocal/energy lyric tags, BPM/Key/time-signature control, remix mode | ComfyUI |
+| 🎹 **Lullaby** | Any song → soft lullaby instrumental. A workbench splits the song into 6 tracks (vocals/guitar/piano/other/bass/drums) with scrubbable waveform players so you pick exactly what carries into the result, then three engines: **Remix** (default — the selected tracks are cleaned, dynamics flattened so it stays soft throughout, then ACE-Step audio-to-audio re-imagines it with lullaby tags; closely resembles the original, with denoise/softness/slowdown controls), **Piano** (melody transcribed directly from the selected tracks, key/chords detected, rebuilt as a rocking piano + music-box arrangement at 55-88bpm on the Salamander sampled grand), and **Melody Match** (traces each sung note's continuous pitch curve via FCPE — real note boundaries, no scale-snap or quantization — onto a single portamento-capable instrument: cello/violin/flute/synth voice/music box; a per-track Route selector lets some ticked stems go through Melody Match while others get a full Piano-style rebuilt arrangement in the same render, mixed together, with an optional ACE-Step polish pass afterward) | lullabykit (2-pass Demucs + basic-pitch/FCPE + librosa + FluidSynth) + ACE-Step |
+| ✂️ **Track Splitter** | Any song → its 6 individual instrument tracks (vocals/guitar/piano/other/bass/drums), each with a scrubbable player and its own download, plus a "download all" zip and a persistent library of past splits — shares its separation cache with the Lullaby tab | lullabykit (Demucs) |
 | 🎙️ **Speech → Text** | Transcribe audio | NeMo Parakeet |
 | 🔊 **Text → Speech** | Fast narration (Kokoro) and voice cloning (Chatterbox) | conda envs |
 | 🗣️ **Voice Studio** | Fine-tune & reuse a personal voice | XTTS-v2 |
@@ -45,6 +48,8 @@ Plus a CLI (`studioctl.ps1`) and a visual control panel (`studio_gui.pyw`, with 
 | **Image — Edit** ![Image Edit](docs/screenshots/05_image_edit.png) | **Music — ACE-Step** ![Music](docs/screenshots/06_music.png) |
 | **Speech → Text** ![Speech to Text](docs/screenshots/07_speech_to_text.png) | **Text → Speech** ![Text to Speech](docs/screenshots/08_text_to_speech.png) |
 | **Voice Studio — create a voice** ![Voice Studio](docs/screenshots/09_voice_studio.png) | **Audiobook** ![Audiobook](docs/screenshots/10_audiobook.png) |
+| **Sprite Studio — 2D game sprites** ![Sprite Studio](docs/screenshots/11_sprite_studio.png) | **Lullaby** ![Lullaby](docs/screenshots/12_lullaby.png) |
+| **Track Splitter** ![Track Splitter](docs/screenshots/13_track_splitter.png) | |
 
 ---
 
@@ -91,8 +96,9 @@ For a deeper dive, see the companion docs in [`/docs`](docs/):
 A single Python stdlib HTTP server (`server.py`) serves the UI (`index.html`) and brokers every request to a backend:
 
 - **Ollama** — local LLM / vision
-- **ComfyUI** (headless git checkout) — image generation/edit and music
+- **ComfyUI** (headless git checkout) — image generation/edit, sprites, and music (sprite post-processing — rembg transparency cutout, resizing, sheet assembly — runs in `spritekit.py` under ComfyUI's venv)
 - **Conda-env worker subprocesses** — speech-to-text, text-to-speech, and voice cloning, each in its own isolated environment (their torch/transformers/setuptools requirements conflict and can't share one env)
+- **lullabykit** (self-contained under `lullabykit/`) — the Lullaby pipeline: its own venv (torch/CUDA, Demucs, basic-pitch) plus bundled FluidSynth binaries and the FluidR3 GM soundfont; runs as a transient subprocess job, not a resident worker
 - **koboldcpp** — long-form fiction backend for Story Maker, launched on demand
 
 The whole stack is controlled from `studioctl.ps1` (CLI) or `studio_gui.pyw` (visual control panel), which start, stop, and health-check every service.
@@ -104,7 +110,8 @@ The whole stack is controlled from `studioctl.ps1` (CLI) or `studio_gui.pyw` (vi
 Local AI Studio is glue code and a UI around excellent open-weight models and tools built by other people:
 
 - **Ollama**, **ComfyUI**, **koboldcpp**
-- **FLUX.2 Klein** (Black Forest Labs) — image generation
+- **FLUX.2 Klein** (Black Forest Labs) — image generation & sprite frames
+- **rembg** (Daniel Gatis) + **U²-Net** — sprite background removal (both commercial-friendly licenses)
 - **ACE-Step 1.5** — music generation
 - **NeMo Parakeet-TDT** (NVIDIA) — speech-to-text
 - **Kokoro** — fast narration TTS
