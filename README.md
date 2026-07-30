@@ -18,6 +18,14 @@ That's still the spirit of the project: give an AI (or yourself) a local set of 
 
 ---
 
+## Demo
+
+A 75-second tour of every tab — narration, background music, and the video itself were all produced by the studio's own tools.
+
+[![Local AI Studio demo video](docs/video_preview.jpg)](https://youtu.be/KtkMroe_sT8)
+
+---
+
 ## Features
 
 | Tab | What it does | Backend |
