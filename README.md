@@ -20,7 +20,7 @@ That's still the spirit of the project: give an AI (or yourself) a local set of 
 
 ## Demo
 
-A 75-second tour of every tab — narration, background music, and the video itself were all produced by the studio's own tools.
+A 75-second tour of every tab. The narration and background music were both produced by the studio's own tools — the video itself was edited separately.
 
 [![Local AI Studio demo video](docs/video_preview.jpg)](https://youtu.be/KtkMroe_sT8)
 
@@ -34,6 +34,7 @@ A 75-second tour of every tab — narration, background music, and the video its
 | 🎨 **Image — Generate** | Text → image (FLUX.2 Klein) | ComfyUI |
 | ✂️ **Image — Edit** | Reference-guided edit / remove / reframe / outpaint | ComfyUI |
 | 🕹️ **Sprite Studio** | One reference image → style-matched 2D game sprites: single actions or a full animation set (idle/walk/run/jump/fall/crouch/attack/hurt/death), true transparent backgrounds, per-action strips + combined sprite sheet with engine-ready JSON metadata, per-frame re-roll | ComfyUI + rembg |
+| 🎬 **Video** | Text → video **with native stereo audio**, generated together in one sampler pass (MiniMax H3) — nothing to mux afterwards. Three input modes: **Text → video**; **First / last frame** (drop one keyframe for image→video, or both and H3 interpolates between them); and **References**, which accepts up to **9 images, 3 video clips (each with its own optional soundtrack) and 3 audio clips** — addressed in the prompt as `<Picture 1>`, `<Video 1>`, `<Audio 1>` — to carry identity, motion, camera style or a cloned voice into the result. Up to 15s at 24fps, rendered at H3's native 768p (running below native makes it stop animating — see the performance notes below). Streams the official 21GB int8 unets through 16GB of VRAM via ComfyUI's per-module offload, with a measured, self-correcting ETA rather than a spinner. **See the licensing note below before sharing anything made here.** | ComfyUI + h3gen.py |
 | 📊 **Composer** | A text brief → a fully arranged, mixed, multitrack instrumental. A local LLM plans the musical direction (instruments, key, tempo, structure, chords, mix, automation) from a fixed "studio" menu — General MIDI patches played by FluidSynth — then a deterministic engine (no note-level AI) writes every part, mixes each track through its own FX chain (saturation, tone shelves, tempo-synced delay, convolution reverb, automated sends), and adds production moves (risers, impacts, downlifters, drops, sidechain ducking). A 3-step wizard — **Set up** (brief/style/length/instrument count) → **Arrange** (DAW-style clip grid, per-track mix/automation, piano-roll note editing, re-render without a new LLM call) → **Export** (master MP3/WAV, multitrack MIDI, per-instrument FLAC stems). 8 genre templates mean it never fails even on a bad LLM response, and an "LLM off" mode composes from the template alone with no model load at all | Ollama (planning) + composerkit.py (CPU-only render) |
 | 🎵 **Music Generation** | Full songs & instrumentals from style tags + lyrics (ACE-Step 1.5 XL) — structure/vocal/energy lyric tags, BPM/Key/time-signature control, remix mode | ComfyUI |
 | 🎹 **Lullaby** | Any song → soft lullaby instrumental. A workbench splits the song into 6 tracks (vocals/guitar/piano/other/bass/drums) with scrubbable waveform players so you pick exactly what carries into the result, then three engines: **Remix** (default — the selected tracks are cleaned, dynamics flattened so it stays soft throughout, then ACE-Step audio-to-audio re-imagines it with lullaby tags; closely resembles the original, with denoise/softness/slowdown controls), **Piano** (melody transcribed directly from the selected tracks, key/chords detected, rebuilt as a rocking piano + music-box arrangement at 55-88bpm on the Salamander sampled grand), and **Melody Match** (traces each sung note's continuous pitch curve via FCPE — real note boundaries, no scale-snap or quantization — onto a single portamento-capable instrument: cello/violin/flute/synth voice/music box; a per-track Route selector lets some ticked stems go through Melody Match while others get a full Piano-style rebuilt arrangement in the same render, mixed together, with an optional ACE-Step polish pass afterward) | lullabykit (2-pass Demucs + basic-pitch/FCPE + librosa + FluidSynth) + ACE-Step |
@@ -66,6 +67,14 @@ Plus a CLI (`studioctl.ps1`) and a visual control panel (`studio_gui.pyw`, with 
 | **Lullaby — Remix engine** (default) ![Lullaby Remix](docs/screenshots/12_lullaby.png) | **Lullaby — Piano engine** ![Lullaby Piano](docs/screenshots/12b_lullaby_piano.png) |
 | **Lullaby — Melody Match engine** ![Lullaby Melody Match](docs/screenshots/12c_lullaby_melodymatch_empty.png) | **Melody Match — per-track routing** (vocals → instrument, piano → rebuilt arrangement, mixed together) ![Melody Match tracks](docs/screenshots/12d_lullaby_melodymatch_tracks.png) |
 | **Track Splitter** ![Track Splitter](docs/screenshots/13_track_splitter.png) | **Track Splitter — results** (per-track players + Play all selected) ![Track Splitter results](docs/screenshots/13b_track_splitter_results.png) |
+
+### Video in detail
+
+**MiniMax H3 — text → video with native audio, generated in one pass.** ⚠️ Licence excludes the UK, EU, US, and South Korea — see the notice below before sharing anything made here.
+
+![Video — mid-render](docs/screenshots/17_video.png)
+
+**Recommended length: 5–15 seconds.** Generation time scales with length, not with a fixed startup cost — measured across four real generations on this rig (RTX 4080, 768p native, 20 steps), a 10.125s clip consistently took ~31.4 minutes end-to-end (model load included), which works out to **roughly 3 minutes of generation time per second of video.** As a rule of thumb: a 5s clip ≈ 15 min, a 15s clip ≈ 45 min. Going shorter than 5s wastes most of that time on model loading rather than the clip itself; going much past 15s just multiplies an already-long wait for diminishing narrative payoff.
 
 ### Composer in detail
 
@@ -142,8 +151,94 @@ Local AI Studio is glue code and a UI around excellent open-weight models and to
 - **Chatterbox** (Resemble AI) — voice cloning
 - **XTTS-v2** (Coqui) — voice fine-tuning — *non-commercial, Coqui CPML: personal/artistic use only*
 - **Cydonia** (TheDrummer) — long-form fiction model
+- **MiniMax H3** (MiniMax) — video with native audio — ⚠️ *territory-restricted, see below*
+- **SageAttention** (thu-ml) + **EasyCache** (H-EmbodVis) — video sampling acceleration
 
 Check each model's own license before any commercial use — several of the above are personal/research use only. This project itself adds no additional restriction beyond what each model's license already requires.
+
+### Video settings on a 16GB card — measured, not assumed
+
+Three of the obvious choices here turned out to be wrong, all in the same direction:
+the settings that *look* right for a small GPU quietly destroy the output. All numbers
+below are same-prompt, same-seed, nothing else on the GPU.
+
+**1. Run at native 768p. Below native, H3 stops animating.**
+
+| Short edge | Near-static frames | Audio mean | Time |
+|---|---|---|---|
+| 480p | **89 / 100** | −40.7 dB | 261s |
+| **768p (native)** | **0 / 100** | −36.8 dB | 779s |
+
+This is the big one. At 480p the model composes a handsome scene and then barely moves
+it — four frames spanning five seconds are near-identical. At native 768 short edge the
+camera actually moves. ComfyUI's template ships a ~480p selector so it runs on modest
+cards; that's an accessibility default, not a quality one. The tab now sizes by **short
+edge** rather than megapixels, because a megapixel target lands 32px under native at
+16:9 (1344×736) on exactly the axis that decides whether the clip moves.
+
+**2. Use the official int8 weights, not a Q3 GGUF — it is better *and* faster.**
+
+| Model | Result | Time |
+|---|---|---|
+| `MiniMax-H3-FL2VA-Q3_K_M.gguf` (15.6GB) | subject collapses into abstract dark geometry | 779s |
+| **`minimax_h3_fl2va_pruned_int8_convrot`** (21GB) | **renders the actual subject** | **573s** |
+
+Counter-intuitive on a 16GB card, but the bigger file wins twice over. comfy-kitchen has
+a fused `dequantize_int8_convrot` CUDA kernel (live once you're on cu130) while GGUF
+Q3_K dequantises the slow way — and ~3.4 bits/weight visibly costs a 20B transformer its
+prompt adherence. Both unets stay selectable via `--unet`.
+
+**3. EasyCache is fast but it eats the audio. SageAttention does nothing at all.**
+
+| Configuration | Wall | vs baseline | Audio mean |
+|---|---|---|---|
+| Baseline | 261s | — | −40.7 dB |
+| \+ SageAttention 2.2 (FP8) | 260s | **1.00× — no gain** | — |
+| \+ EasyCache | 160s | 1.63× | **−49.8 dB** |
+
+EasyCache skips 8 of 20 steps, which explains the speedup exactly — but picture and sound
+share one latent and the skip decision is dominated by the video channels, so the audio
+branch is starved of steps it needed. **9 dB quieter.** Fine for silent drafts, off by
+default otherwise.
+
+SageAttention speeds up *attention arithmetic*, but the GPU here is waiting on PCIe, not
+on maths: roughly half the model streams from system RAM every step
+(`7269 MB loaded, 8073 MB offloaded`). There is no stall for a faster kernel to fill. On
+a card that fits the whole model in VRAM the balance would likely flip back.
+
+**Practical default:** 768p, 20 steps, int8 weights, EasyCache and SageAttention off —
+about 9½ minutes for a 5-second clip. Drop to 480p only for checking composition, and
+never judge motion from a draft.
+
+### ⚠️ MiniMax H3 (Video tab) — read before you share anything
+
+The Video tab is the one part of this studio that is **not** freely usable everywhere, and the
+restriction is unusual, so it is worth stating plainly.
+
+MiniMax H3 is released under the **MiniMax H3 Community License Agreement**, which defines an
+"Applicable Territory" of *worldwide, excluding the Excluded Territories*. The excluded
+territories are:
+
+> **the European Union · the United Kingdom · the United States · the Republic of Korea**
+
+Two consequences that are easy to miss:
+
+1. **The restriction follows the output, not just the weights.** The licence covers use,
+   reproduction, modification, distribution and display of the model *"or any of their Outputs
+   or results"* outside the Applicable Territory. A video you generate is an Output.
+2. **Commercial use requires on-screen attribution.** Any commercial product must
+   prominently display **"MiniMax H3"** in its user interface. (Above $20M annual revenue you
+   also need prior written authorisation from MiniMax.)
+
+**Status for this project:** authorisation has been applied for. Until it is granted, treat the
+Video tab as **local and personal only** — do not redistribute, publish or commercially use its
+output. Every other tab in this studio is unaffected. The Video tab carries this same notice
+in-app so it cannot be missed. The **setup package now installs it** (`SETUP_FOR_CLAUDE.md`
+PHASE 5h), which is why that phase opens by putting this notice in front of the user and asking
+before it spends the ~63 GB: skipping it leaves the rest of the studio fully working.
+
+If you are redistributing Local AI Studio, you must pass this notice on to your users; their
+obligations depend on where *they* are, not where you are.
 
 ---
 

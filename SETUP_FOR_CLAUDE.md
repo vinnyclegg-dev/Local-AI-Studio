@@ -2,8 +2,8 @@
 
 > **Read this first.** You are Claude Code. This single Markdown file is a complete, self-contained
 > installer for the **Local AI Studio** — a private, local, zero-API-cost AI workstation that runs
-> Large-Language, Image, Music, Speech-to-Text, Text-to-Speech and voice-cloning models on the user's
-> own NVIDIA GPU, exposed through one tabbed web app. **Everything you need is in this file**: the full
+> Large-Language, Image, Video, Music, Speech-to-Text, Text-to-Speech and voice-cloning models on the
+> user's own NVIDIA GPU, exposed through one tabbed web app. **Everything you need is in this file**: the full
 > source of every program is embedded verbatim in the *EMBEDDED SOURCE FILES* section at the bottom.
 > Follow the phases in order. Do not fetch any external repository for the application code — write the
 > embedded files to disk exactly as given.
@@ -21,6 +21,7 @@ A local web app at **http://127.0.0.1:8800** with these tabs / features:
 | 🎨 Image — Generate | Text→image (FLUX.2 Klein) | ComfyUI |
 | ✂️ Image — Edit | Reference-guided edit / remove / reframe / outpaint | ComfyUI |
 | 🕹️ Sprite Studio | One reference image → style-matched 2D game sprites: single actions (9 built-ins with hand-written pose scripts, or a custom motion) or a full animation set (idle/walk/run/jump/fall/crouch/attack/hurt/death). True transparent backgrounds (rembg), per-action strips + combined sheet with engine-ready JSON, per-frame ↻ re-roll with automatic backups; sets persist in `sprites\` | ComfyUI (FLUX.2 ReferenceLatent) + `spritekit.py` in the ComfyUI venv |
+| 🎬 Video | Text → video **with native stereo audio**, both produced by one sampler pass (**MiniMax H3**) — there is nothing to mux afterwards. Three input modes: **Text → video**; **First / last frame** (one keyframe = image→video, both = H3 interpolates between them); and **References**, taking up to **9 images, 3 video clips (each with its own optional soundtrack) and 3 audio clips**, addressed in the prompt as `<Picture 1>`, `<Video 1>`, `<Audio 1>`, to carry identity, motion, camera style or a cloned voice into the result. Up to 15 s at 24 fps. Renders at H3's **native 768 short edge** — below native the model composes a scene and then barely animates it (89/100 near-static frames at 480 vs 0/100 at 768, same prompt and seed), so the tab sizes by short edge, not megapixels. The ~21 GB int8 unets stream through 16 GB of VRAM via ComfyUI's per-module offload, with a **measured, self-correcting ETA** (load/sample/decode timings cached per geometry) rather than a spinner. ⚠️ **Territory-restricted licence — read the notice in PHASE 5h before generating or sharing anything.** | ComfyUI (native H3 nodes) + `h3gen.py` |
 | 🎼 Composer | A brief → a finished, arranged, mixed instrumental, as a 3-step wizard (**Set up → Arrange → Export**). The local LLM plans the *musical direction* (instruments + role, key, tempo, section structure, chord progression per section, mix and automation moves); `composerkit.py` writes the actual notes, because note-level output from a 20B local model isn't reliable enough to listen to. Instruments come from the bundled SoundFonts played by FluidSynth — free, already on disk, and the GM bank fits the 800 MB "plugin budget"; piano tracks are routed to the sampled Salamander Grand. Every track gets its own stem and channel strip: saturation, tone shelves, a time-varying lowpass, tempo-synced ping-pong delay and convolution reverb with **automated** send levels, plus volume/pan automation, risers, sub impacts, downlifters, drop silences and kick sidechaining. A **performance pass** (within-note CC11 swells, guitar strums/piano rolls, correlated timing drift with per-role feel, drum round-robin) is what stops it sounding like MIDI. Step 2 is a DAW-style editor: clip grid per track × section, channel strips, chord/energy/FX editing, and a **piano roll** for hand-editing notes — edits re-render in place with no LLM call. Optional ACE-Step re-texture pass ships *alongside* the clean master for A/B. Outputs master MP3/WAV, per-instrument FLAC stems, multitrack MIDI with pan/volume CCs, plus `score.json` and `arrangement.md` | Ollama (planning) + `composerkit.py` (FluidSynth + numpy/scipy, CPU) |
 | 🎵 Music Generation | Full songs & instrumentals from style tags + lyrics (**ACE-Step 1.5 XL**, hybrid planning-LM + DiT; **turbo default** for smooth vocals + speed, sft selectable for max prompt adherence). Structure/vocal/energy lyric-tag toolbar, BPM/Key/time-signature (Auto = model decides), planner creativity/guidance sliders, annotated sampler/scheduler picks, auto-retry on degenerate seeds, -1 dB peak limiting; remix mode | ComfyUI (git checkout) |
 | 🎹 Lullaby | Any song → a soft lullaby instrumental. A workbench splits the song into 6 stems (vocals/guitar/piano/other/bass/drums) with scrubbable previews so you choose what carries into the result, then one of three engines: **Remix** (default — drums dropped, dynamics flattened, then ACE-Step audio2audio re-imagines it with lullaby tags at a user-set denoise; closest to the original) · **Piano** (melody transcribed + key/chords detected, rebuilt as a rocking piano + music-box arrangement at 55–88bpm on a sampled grand) · **Melody Match** (traces each sung NOTE's actual continuous pitch curve via FCPE — no scale-snap/quantization, only real note boundaries — onto a portamento-capable instrument: cello/violin/flute/synth voice/music box; per-track **Route** selector lets some ticked stems go through Melody Match while others go through a full Piano-style rebuilt arrangement in the same render, mixed together; optional ACE-Step polish pass on the result) | `lullabykit` (2-pass Demucs + basic-pitch/FCPE + librosa + FluidSynth) + ACE-Step |
@@ -40,10 +41,17 @@ start / stop / monitor the whole stack (Ollama + ComfyUI + the studio server), a
 - **OS:** Windows 10/11 (the control tools, conda envs and install paths assume Windows).
 - **GPU:** an NVIDIA GPU with a current driver. **~16 GB VRAM** is the design target. The studio loads
   **one heavy model at a time** — this is by design, never run two large models concurrently.
-- **Disk:** ~**95 GB** free for the required model set (~**115 GB** with the optional uncensored image
-  model and Unlocked LLM). The largest items: ACE-Step 1.5 files ~20 GB, gpt-oss:20b ~14 GB,
-  Cydonia GGUF ~13 GB, FLUX.2 Klein ~12 GB, ComfyUI venv ~8 GB, `lullabykit` ~5 GB (its own
-  torch/Demucs/basic-pitch venv + bundled FluidSynth + soundfonts).
+- **Disk:** ~**158 GB** free for the required model set (~**178 GB** with the optional uncensored image
+  model and Unlocked LLM). The largest items: **MiniMax H3 ~63 GB** (two 21 GB unets + a 16 GB text
+  encoder + VAEs — by far the biggest single feature; PHASE 5h), ACE-Step 1.5 files ~30 GB,
+  gpt-oss:20b ~14 GB, Cydonia GGUF ~13 GB, FLUX.2 Klein ~12 GB, ComfyUI venv ~8 GB, `lullabykit`
+  ~5 GB (its own torch/Demucs/basic-pitch venv + bundled FluidSynth + soundfonts).
+- **RAM:** 32 GB. H3's unet is larger than the card, so ComfyUI streams it from system RAM every
+  step; with less, Windows pages it to disk and a render goes from minutes to tens of minutes.
+- **Licensing:** every model here is free to *run* locally, but two carry real restrictions the
+  installer must not hide — XTTS-v2 (Coqui CPML, non-commercial) and **MiniMax H3, whose licence
+  excludes the UK, EU, US and South Korea and follows the generated output, not just the weights**
+  (full notice in PHASE 5h). Surface both to the user rather than silently installing them.
 - **Paths are portable.** Everywhere below, `%USERPROFILE%` is the current user's home
   (PowerShell: `$HOME`). Never hard-code another machine's user folder.
 - **Idempotent.** Every step is gated on a check — re-running this runbook must not damage an existing
@@ -103,6 +111,7 @@ $dirs = @(
   "$HOME\local-ai-studio\voices",
   "$HOME\local-ai-studio\stories",
   "$HOME\local-ai-studio\sprites",
+  "$HOME\local-ai-studio\videos",
   "$HOME\local-ai-studio\compositions",
   "$HOME\local-ai-studio\lullabykit",
   "$HOME\.claude\skills\local-llm\scripts",
@@ -117,7 +126,7 @@ $dirs | ForEach-Object { New-Item -ItemType Directory -Force -Path $_ | Out-Null
 ```
 
 Now write each embedded file (use the Write tool; create parent folders if needed). The complete list is
-in *EMBEDDED SOURCE FILES* — 27 files in total.
+in *EMBEDDED SOURCE FILES* — 28 files in total.
 
 ---
 
@@ -158,8 +167,9 @@ conda run -n kokoro python -m spacy download en_core_web_sm
 
 ## PHASE 4 — ComfyUI headless runtime (git checkout + venv + custom nodes)
 
-The studio runs a **current git checkout** of ComfyUI (ACE-Step 1.5 needs a newer ComfyUI than the
-Desktop app ships) with its data directory at `%USERPROFILE%\Documents\ComfyUI`, and uses two custom
+The studio runs a **current git checkout** of ComfyUI (ACE-Step 1.5 and MiniMax H3 both need a newer
+ComfyUI than the Desktop app ships — H3's nodes are core, but only in 2026 builds; verified against
+**ComfyUI 0.30.0**) with its data directory at `%USERPROFILE%\Documents\ComfyUI`, and uses two custom
 nodes (already written in Phase 2): `ram_websocket_save.py` streams generated images back in-memory
 (no disk writes) and `ace15_studio_encode.py` exposes ACE-Step 1.5's text encode with optional
 bpm/key/timesignature (empty = the model decides).
@@ -170,10 +180,33 @@ $comfyCode = "$HOME\comfyui-src"
 python -m venv "$comfyCode\.venv"
 $venvPy = "$comfyCode\.venv\Scripts\python.exe"
 & $venvPy -m pip install --upgrade pip
-& $venvPy -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu129
+# cu130, NOT cu129: the Video tab's int8 H3 unets are dequantised by comfy-kitchen's fused
+# dequantize_int8_convrot CUDA kernel, which is only live on the cu130 build. On cu129 they
+# still run, just markedly slower. (lullabykit in PHASE 8 keeps its own cu129 venv — leave it.)
+& $venvPy -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu130
 & $venvPy -m pip install -r "$comfyCode\requirements.txt"
 & $venvPy -m pip install rembg onnxruntime   # Sprite Studio: transparent-background cutout (spritekit.py)
 ```
+
+Two third-party node packs are needed by the **Video** tab (clone into the *data* directory's
+`custom_nodes`, not the code checkout's):
+
+```powershell
+$nodes = "$HOME\Documents\ComfyUI\custom_nodes"
+# VideoHelperSuite — VHS_LoadVideo, used when the Video tab's References mode is given video clips
+git clone --depth 1 https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git "$nodes\comfyui-videohelpersuite"
+# KJNodes — PathchSageAttentionKJ, the Video tab's optional SageAttention toggle
+git clone --depth 1 https://github.com/kijai/ComfyUI-KJNodes.git "$nodes\comfyui-kjnodes"
+& $venvPy -m pip install -r "$nodes\comfyui-videohelpersuite\requirements.txt"
+& $venvPy -m pip install -r "$nodes\comfyui-kjnodes\requirements.txt"
+```
+
+> **Optional extras for the Video tab.** `pip install sageattention` (only if the user wants that
+> toggle to do anything — it is **off by default and measured as a no-op on a 16 GB card**, which is
+> offload-bound rather than attention-bound), and **ComfyUI-GGUF**
+> (`git clone https://github.com/city96/ComfyUI-GGUF.git "$nodes\ComfyUI-GGUF"` + `pip install gguf`)
+> only if the user wants to run a GGUF H3 quant via `h3gen.py --unet <file>.gguf`. Neither is needed
+> for the default int8 path.
 
 The custom nodes load on the next ComfyUI start (Phase 6 launches it). Models go in Phase 5.
 
@@ -370,6 +403,76 @@ curl.exe -L -o "$M\text_encoders\qwen_4b_ace15.safetensors" "$repo/text_encoders
 curl.exe -L -o "$M\vae\ace_1.5_vae.safetensors" "$repo/vae/ace_1.5_vae.safetensors"
 ```
 
+### 5h. Video tab — MiniMax H3 (video **with native audio**, ~63 GB)
+
+> **⚠️ READ THIS TO THE USER BEFORE DOWNLOADING — do not silently install these models.**
+>
+> MiniMax H3 ships under the **MiniMax H3 Community License Agreement**, whose "Applicable
+> Territory" is *worldwide **excluding** the European Union, the United Kingdom, the United States
+> and the Republic of Korea*. Two consequences are easy to miss:
+>
+> 1. **The restriction follows the output.** The licence covers use, reproduction, modification,
+>    distribution and display of the models *"or any of their Outputs or results"*. A video generated
+>    here is an Output — so being outside the Applicable Territory is not just about the weights.
+> 2. **Commercial use requires on-screen attribution.** Any commercial product must prominently
+>    display **"MiniMax H3"** in its UI. Above $20M annual revenue you also need prior written
+>    authorisation from MiniMax.
+>
+> Every other tab in this studio is unaffected by this. **Ask the user whether to install the Video
+> tab's models before spending the ~63 GB**, and make sure they have seen the two points above. The
+> tab repeats this notice in-app so it cannot be missed. If they decline, skip this section entirely —
+> nothing else in the studio depends on it, and the Video tab will simply report the models as missing.
+
+The **Video** tab renders picture *and* stereo audio from a single sampler pass — the audio is not a
+second model bolted on, so nothing needs muxing afterwards. `h3gen.py` (embedded below) drives
+ComfyUI's **core** H3 nodes over its HTTP API. There are two unets and the tab picks between them by
+input: **fl2va** for text→video and first/last-frame, **ref2va** for reference-conditioned renders.
+
+```powershell
+$M = "$HOME\Documents\ComfyUI\models"
+New-Item -ItemType Directory -Force "$M\diffusion_models","$M\text_encoders","$M\vae" | Out-Null
+$h3 = "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main"
+
+# Diffusion models — official PRUNED INT8 (~21 GB each). Both are needed: fl2va backs
+# Text→video and First/last frame, ref2va backs References mode.
+curl.exe -L -o "$M\diffusion_models\minimax_h3_fl2va_pruned_int8_convrot.safetensors" `
+  "$h3/diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors"
+curl.exe -L -o "$M\diffusion_models\minimax_h3_ref2va_pruned_int8_convrot.safetensors" `
+  "$h3/diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors"
+
+# Text encoder — Qwen3-VL-32B, NVFP4-AWQ (~16 GB). Blackwell-native but dequantises fine on Ada,
+# and it is the encoder ComfyUI's official H3 templates use. Unloaded before sampling starts.
+curl.exe -L -o "$M\text_encoders\qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors" `
+  "$h3/text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
+
+# Two VAEs — one decodes the picture, one the audio, from the same latent (~5.2 GB + ~0.6 GB)
+curl.exe -L -o "$M\vae\minimax_h3_video_vae_fp16.safetensors" "$h3/vae/minimax_h3_video_vae_fp16.safetensors"
+curl.exe -L -o "$M\vae\minimax_h3_audio_vae_fp32.safetensors" "$h3/vae/minimax_h3_audio_vae_fp32.safetensors"
+```
+
+**Do not "optimise" these choices — all three were measured on the 16 GB target card, same prompt and
+seed, and the intuitive answer lost every time:**
+
+| Decision | Intuition | Measured |
+|---|---|---|
+| Resolution | 480p to fit the card | **768 short edge (native) or the model stops animating** — 89/100 near-static frames at 480 vs 0/100 at 768. ComfyUI's template ships a ~480p selector for accessibility, not quality. |
+| Weights | Q3_K_M GGUF (15.6 GB) fits better than int8 (21 GB) | **int8 wins twice**: it renders the actual subject where Q3 collapsed into abstract dark geometry, *and* it was faster — 573 s vs 779 s at 1344×768/20 steps. comfy-kitchen's fused `dequantize_int8_convrot` kernel (cu130) beats GGUF Q3_K's slow dequantise. |
+| Acceleration | SageAttention + EasyCache, both on | **Both off by default.** SageAttention: 260 s vs 261 s — the GPU is waiting on PCIe (≈half the model streams from RAM each step), not on attention maths, so there is no stall for a faster kernel to fill. EasyCache: 1.63× faster but it skips steps the *audio* branch needed — picture and sound share one latent — costing ~9 dB (−40.7 → −49.8 dB mean). Fine for silent drafts only. |
+
+Practical default: **768p, 20 steps, int8, both accelerators off** — that is ~573 s of *sampling* for a
+5-second clip on a 16 GB card, with model load and streaming on top (see PHASE 6 step 9 before
+concluding a render has hung). Frame counts are snapped onto H3's `length % 17 == 5` grid and every canvas
+dimension onto a multiple of 32; `h3gen.py` does both, and `server.py` mirrors the maths so its ETA
+key matches what actually renders.
+
+Verify the five files landed and are the right size (a few KB means an HTML error page, not weights):
+
+```powershell
+Get-ChildItem "$M\diffusion_models\minimax_h3_*","$M\text_encoders\qwen3vl_32b_minimax_h3_*","$M\vae\minimax_h3_*" |
+  Select-Object Name, @{n='GB';e={[math]::Round($_.Length/1GB,2)}}
+# expect: fl2va 19.53 · ref2va 19.53 · qwen3vl_32b nvfp4 14.61 · video vae 4.85 · audio vae 0.56
+```
+
 ## PHASE 6 — Launch & verify
 
 ```powershell
@@ -399,6 +502,20 @@ Then open **http://127.0.0.1:8800** and smoke-test each tab:
    seeds, but a levels check (`ffmpeg -af volumedetect`: mean should be ≳ −25 dB) proves the chain.
 8. **Audiobook** → with Kokoro still loaded from step 4, paste two short paragraphs → Render →
    chapter MP3 plays with natural sentence/paragraph pauses.
+9. **Video** (only if PHASE 5h was installed) → **Load video model** (claims the one-model slot and
+   frees everything else — H3 needs the VRAM *and* the system RAM) → **Text → video**, any prompt,
+   5 s, 16:9, leave the defaults → Generate. The stage line should walk through *loading text encoder →
+   encoding prompt → loading diffusion model → sampling → decoding video → decoding audio → muxing*,
+   with a real countdown once a step time is observed (the first run of any given geometry says
+   "measuring…" — there is no cached timing yet). **This takes tens of minutes, not seconds, and that
+   is normal, not a hang**: the A/B in PHASE 5h measured ~573 s of sampling for 1344×768/20 steps, and
+   a cold run adds the 32B text-encoder load plus streaming a 21 GB unet from system RAM on top of it —
+   observed end-to-end times of ~30 minutes for a 5 s clip on a 16 GB card are unremarkable. Let the
+   tab's own measured ETA be the guide; it self-corrects from the observed seconds-per-step and caches
+   the result per geometry, so the second render of the same shape reports a real countdown from the
+   start. **Play the result with sound** — H3's whole point is that
+   the audio comes out of the same pass, so a silent clip means the audio VAE is missing. The file
+   lands in `local-ai-studio\videos\`.
 
 The visual control panel is **`Studio Control Panel.vbs`** (double-click — launches with no console
 window at all; the `.cmd` variant does the same but flashes a batch console) — Start All / Stop All /
@@ -1059,6 +1176,11 @@ Notes:
 - ComfyUI: ACE-Step 1.5 split files (`acestep_v1.5_xl_turbo_bf16` [default] +
   `acestep_v1.5_xl_sft_bf16` + `qwen_0.6b_ace15` + `qwen_4b_ace15` + `ace_1.5_vae`) — Music tab,
   see PHASE 5g.
+- ComfyUI: MiniMax H3 files (`minimax_h3_fl2va_pruned_int8_convrot` + `minimax_h3_ref2va_pruned_int8_convrot`
+  + `qwen3vl_32b_minimax_h3_nvfp4_awq` + `minimax_h3_video_vae_fp16` + `minimax_h3_audio_vae_fp32`) —
+  Video tab, ~63 GB, see PHASE 5h. ⚠️ **Territory-restricted licence that follows the output — confirm
+  with the user before installing.** Needs the VideoHelperSuite + KJNodes packs from PHASE 4;
+  `sageattention` and ComfyUI-GGUF are optional and not used by the default path.
 - ComfyUI venv pips: `rembg` + `onnxruntime` (Sprite Studio transparency — installed in PHASE 4;
   rembg's `u2net` weights auto-download to `%USERPROFILE%\.u2net` on first cutout).
 - `lullabykit`: its own venv (torch cu129 + `demucs` + `basic-pitch[onnx]` + `pretty_midi`/`mido`/
@@ -1097,6 +1219,11 @@ Notes:
 | Music track is near-silent, or vocals are broken-up/crackly | ACE-Step 1.5's planning LM collapses on **rare seeds** (deterministic per seed). musicgen.py auto-detects near-silence and rerolls up to 2× when the seed wasn't pinned; for a *partially* rough track just regenerate (new seed) or try the annotated `er_sde` + `linear_quadratic` sampler/scheduler picks. |
 | ACE-Step output is garbage with `--use-sage-attention` | Known incompatibility — never launch ComfyUI with that flag for this stack. |
 | ComfyUI logs `Failed to initialize database ... unable to open database file` at startup | Harmless for headless/API use — generation works regardless. |
+| Video renders but barely moves — a handsome, nearly static shot | Short edge below H3's native 768. This is the single most common Video-tab mistake; 480p measured 89/100 near-static frames. Use 768 and only drop lower to check composition. |
+| Video tab: "load the video model first (top of this tab)" | H3 renders only when it owns the one-model slot — click **Load video model**, which frees Ollama/ComfyUI/koboldcpp first. |
+| Video comes out **silent** | The audio VAE is missing or misnamed — `minimax_h3_audio_vae_fp32.safetensors` must be in `models\vae\` (PHASE 5h). H3 decodes picture and sound from the same latent; there is no separate audio step to fail. |
+| Video render is far slower than ~9–10 min per 5 s clip | Either the ComfyUI venv is on cu129 (no fused `dequantize_int8_convrot` kernel — PHASE 4 installs cu130), or the machine is under 32 GB RAM and Windows is paging the offloaded half of the unet to disk. |
+| ComfyUI errors `no video in ComfyUI outputs` / accepts no prompt | H3 nodes missing → the checkout predates them (`git -C "$HOME\comfyui-src" pull`), or the H3 files in PHASE 5h were never downloaded. `VHS_LoadVideo` missing specifically means the VideoHelperSuite pack from PHASE 4 is absent. |
 | ComfyUI won't load ACE-Step 1.5 models (`unknown model` / missing nodes) | The ComfyUI checkout is too old — `git -C "$HOME\comfyui-src" pull` and reinstall requirements (ACE-Step 1.5 needs a 2026+ build; the Desktop app's bundled ComfyUI is not used). |
 
 ---
@@ -1104,9 +1231,9 @@ Notes:
 # EMBEDDED SOURCE FILES
 
 Below is the complete source of every program in the stack. For each, **create the file at the exact path
-in its heading** and paste its contents verbatim (strip nothing). There are 27 files.
+in its heading** and paste its contents verbatim (strip nothing). There are 28 files.
 
-## File 1 of 27 — `%USERPROFILE%\local-ai-studio\server.py`
+## File 1 of 28 — `%USERPROFILE%\local-ai-studio\server.py`
 
 ```python
 #!/usr/bin/env python3
@@ -1123,6 +1250,7 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import os
 import queue
 import re
@@ -1133,6 +1261,7 @@ import sys
 import threading
 import time
 import urllib.request
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -1262,6 +1391,24 @@ os.makedirs(COMPOSITIONS, exist_ok=True)
 SPRITES = os.path.join(HERE, "sprites")
 os.makedirs(SPRITES, exist_ok=True)
 SPRITEKIT = os.path.join(HERE, "spritekit.py")
+
+# ---- Video (MiniMax H3: video WITH native stereo audio, one pass) -------------
+# h3gen.py drives ComfyUI's native H3 nodes. Two unets: fl2va (text / first-last
+# frame) and ref2va (up to 9 images + 3 videos + 3 audio clips as references).
+# The official pruned int8 unets (~21GB) stream through 16GB of VRAM via ComfyUI's
+# per-module offload. Counter-intuitively they beat the 15.6GB Q3_K_M GGUF on BOTH
+# quality and speed (573s vs 779s at 1344x768/20 steps) — see h3gen.py's header.
+# LICENCE: the MiniMax H3 Community Licence excludes the UK, EU, US and South
+# Korea, and the restriction covers generated outputs, not just the weights. It
+# also requires "MiniMax H3" be shown in the UI of any commercial product. The
+# Video tab surfaces both; see README.md before redistributing anything made here.
+VIDEOS = os.path.join(HERE, "videos")
+os.makedirs(VIDEOS, exist_ok=True)
+H3GEN = os.path.join(HERE, "h3gen.py")
+# measured stage timings, keyed by geometry+settings, so the UI can show a real
+# ETA instead of a spinner. Written after every successful render.
+H3_ETA_CACHE = os.path.join(TMP, "h3_eta.json")
+
 # ComfyUI's venv python (canonical: the comfyui-src runtime checkout; some installs
 # also carry a venv in the Documents data dir — accept either).
 COMFY_PY = os.environ.get("COMFYUI_PY") or next(
@@ -1597,6 +1744,12 @@ class Manager:
                 elif worker == "music":
                     music_warmup()
                     self.key = "music"
+                elif worker == "video":
+                    # No warmup: H3's unet is ~21GB and its text encoder ~15.7GB,
+                    # so a throwaway 1-step gen would cost minutes and buy nothing.
+                    # Claiming the slot is the point — _unload_all() above already
+                    # freed Ollama/ComfyUI/Kobold, which is the VRAM and RAM H3 needs.
+                    self.key = "video"
                 elif worker == "story":
                     kobold_start()
                     self.key = f"story:{STORY_MODEL_LABEL}"
@@ -3720,6 +3873,291 @@ class SpriteJob:
 SPRITEJOB = SpriteJob()
 
 
+# ---- Video (MiniMax H3) ------------------------------------------------------
+def _h3_eta_key(p: dict) -> str:
+    """Timings only transfer between runs that do the same amount of work, so the
+    cache key carries everything that changes cost."""
+    return "|".join(str(p.get(k)) for k in
+                    ("mode", "width", "height", "length", "steps", "easycache",
+                     "sage", "ref_image_size", "nrefs"))
+
+
+def _h3_eta_load() -> dict:
+    try:
+        with open(H3_ETA_CACHE, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _h3_eta_save(key: str, rec: dict):
+    d = _h3_eta_load()
+    old = d.get(key) or {}
+    # Exponential smoothing: one cold run (disk cache empty, model paging) should
+    # not permanently poison the estimate, and one warm run should not erase the
+    # memory of how slow a cold start is.
+    for k, v in rec.items():
+        d.setdefault(key, {})[k] = v if k not in old else round(0.6 * old[k] + 0.4 * v, 2)
+    try:
+        os.makedirs(os.path.dirname(H3_ETA_CACHE), exist_ok=True)
+        with open(H3_ETA_CACHE, "w", encoding="utf-8") as f:
+            json.dump(d, f, indent=1)
+    except Exception:
+        pass
+
+
+class H3Job:
+    """Async MiniMax H3 render. One at a time — the model owns the whole GPU.
+
+    ETA is measured, not guessed: h3gen.py emits '== STAGE' / '== PROGRESS n/m t'
+    markers, and this splits the run into load / sample / decode. Sampling cost is
+    re-derived live from the observed seconds-per-step, so the estimate corrects
+    itself mid-run; load and decode come from the cache for this exact geometry.
+    A key that has never run reports eta=None and the UI says 'measuring…'."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self._reset()
+
+    def _reset(self):
+        self.state = "idle"; self.step = 0; self.total = 0
+        self.message = ""; self.current = ""; self.name = None
+        self.files = []; self.stop_flag = False; self.proc = None
+        self.eta = None; self.elapsed = 0.0; self.stage = ""
+        self._t0 = 0.0; self._sample_t0 = 0.0; self._per_step = None
+        self._key = ""; self._cached = {}
+
+    def status(self) -> dict:
+        if self.state == "running":
+            self.elapsed = round(time.time() - self._t0, 1)
+        return {"state": self.state, "step": self.step, "total": self.total,
+                "message": self.message, "current": self.current, "stage": self.stage,
+                "name": self.name, "files": self.files,
+                "eta": (round(self.eta) if self.eta is not None else None),
+                "elapsed": self.elapsed}
+
+    def cancel(self) -> dict:
+        if self.state == "running":
+            self.stop_flag = True
+            self.current = "cancelling…"
+            p = self.proc
+            if p and p.poll() is None:
+                try:
+                    p.kill()
+                except Exception:
+                    pass
+        return self.status()
+
+    def start(self, d: dict) -> dict:
+        with self.lock:
+            if self.state == "running":
+                raise RuntimeError("a video is already rendering — wait for it or cancel it")
+            if MGR.key != "video":
+                raise RuntimeError("load the video model first (top of this tab)")
+            prompt = (d.get("prompt") or "").strip()
+            if not prompt:
+                raise RuntimeError("describe the shot — H3 needs a prompt even with references")
+            mode = d.get("mode") or "t2v"
+            if mode not in ("t2v", "flf", "ref"):
+                raise RuntimeError(f"unknown mode {mode!r}")
+
+            # data-URL uploads -> scratch files h3gen.py can stage into ComfyUI
+            def dump(b64: str, ext: str) -> str:
+                p = os.path.join(TMP, f"h3in_{uuid.uuid4().hex}{ext}")
+                with open(p, "wb") as f:
+                    f.write(base64.b64decode((b64 or "").split(",")[-1]))
+                return p
+
+            self._clean_inputs()
+            args = ["--mode", mode, "--prompt", prompt, "--progress"]
+            nrefs = 0
+            if mode == "flf":
+                if not (d.get("first_frame") or d.get("last_frame")):
+                    raise RuntimeError("first/last-frame mode needs at least one keyframe image")
+                for key, flag in (("first_frame", "--first-frame"), ("last_frame", "--last-frame")):
+                    if d.get(key):
+                        args += [flag, dump(d[key], ".png")]; nrefs += 1
+            elif mode == "ref":
+                caps = (("ref_images", "--ref-image", 9, ".png"),
+                        ("ref_videos", "--ref-video", 3, ".mp4"),
+                        ("ref_video_audios", "--ref-video-audio", 3, ".wav"),
+                        ("ref_audios", "--ref-audio", 3, ".wav"))
+                for key, flag, cap, ext in caps:
+                    items = d.get(key) or []
+                    if len(items) > cap:
+                        raise RuntimeError(f"{key.replace('_', ' ')}: at most {cap} (got {len(items)})")
+                    for it in items:
+                        args += [flag, dump(it, ext)]; nrefs += 1
+                if not nrefs:
+                    raise RuntimeError("reference mode needs at least one image, video or audio clip")
+
+            # 20 is what ComfyUI's official H3 templates use and what the verified
+            # native-res renders were made at; 25 costs ~23% more time for little.
+            steps = max(1, min(60, int(d.get("steps") or 20)))
+            seconds = max(0.5, min(15.0, float(d.get("seconds") or 5.0)))
+            # 768 = H3's native short edge. Below native the model composes a scene
+            # and then barely animates it: 89/100 near-static frames at 480 vs
+            # 0/100 at 768 on the same prompt and seed.
+            se = max(256, min(768, int(d.get("short_edge") or 768)))
+            aspect = d.get("aspect") or "16:9"
+            # measured no-op on this hardware (see h3gen.py --sage) — off by default
+            sage = d.get("sage") or "disabled"
+            # off by default: 1.63x faster but costs ~9dB of the generated audio
+            easycache = bool(d.get("easycache", False))
+            args += ["--aspect", aspect, "--short-edge", str(se), "--seconds", str(seconds),
+                     "--steps", str(steps), "--sage", sage,
+                     "--shift-video", str(float(d.get("shift_video") or 12.0)),
+                     "--shift-audio", str(float(d.get("shift_audio") or 3.0)),
+                     "--sampler", d.get("sampler") or "res_multistep",
+                     "--scheduler", d.get("scheduler") or "simple",
+                     "--ref-image-size", d.get("ref_image_size") or "match"]
+            if d.get("seed") not in (None, "", -1):
+                args += ["--seed", str(int(d["seed"]))]
+            if not easycache:
+                args.append("--no-easycache")
+            else:
+                args += ["--easycache-threshold", str(float(d.get("easycache_threshold") or 0.2))]
+
+            raw = (d.get("name") or "").strip()
+            base = _safe_name(raw) if raw else "video_" + time.strftime("%Y%m%d_%H%M%S")
+            name, k = base, 2
+            while os.path.exists(os.path.join(VIDEOS, name + ".mp4")):
+                name, k = f"{base}_{k}", k + 1
+            out = os.path.join(VIDEOS, name + ".mp4")
+            args += ["--out", out]
+
+            w, h = _h3_wh(aspect, se)
+            length = _h3_length(seconds)
+            self._reset()
+            self.state = "running"; self.name = name; self.total = steps
+            self.stage = "starting"; self.current = "starting…"
+            self._t0 = time.time()
+            self._key = _h3_eta_key({"mode": mode, "width": w, "height": h, "length": length,
+                                     "steps": steps, "easycache": easycache, "sage": sage,
+                                     "ref_image_size": d.get("ref_image_size") or "match",
+                                     "nrefs": nrefs})
+            self._cached = _h3_eta_load().get(self._key) or {}
+            if self._cached.get("total"):
+                self.eta = self._cached["total"]
+            self._args = args; self._out = out
+        threading.Thread(target=self._run, daemon=True).start()
+        return self.status()
+
+    def _clean_inputs(self):
+        for n in os.listdir(TMP) if os.path.isdir(TMP) else []:
+            if n.startswith("h3in_"):
+                try:
+                    os.remove(os.path.join(TMP, n))
+                except Exception:
+                    pass
+
+    def _recalc_eta(self):
+        """remaining = steps left * measured seconds/step + cached decode."""
+        if self._per_step is None:
+            return
+        left = max(0, self.total - self.step)
+        self.eta = left * self._per_step + (self._cached.get("decode") or 0.0)
+
+    def _run(self):
+        env = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8", PYTHONUNBUFFERED="1")
+        tail = []
+        try:
+            self.proc = subprocess.Popen([COMFY_PY, H3GEN, *self._args],
+                                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                         text=True, encoding="utf-8", errors="replace",
+                                         env=env, bufsize=1, cwd=HERE, **NOWIN)
+            for line in self.proc.stdout:
+                line = line.strip()
+                if not line:
+                    continue
+                tail.append(line); tail[:] = tail[-40:]
+                if line.startswith("== STAGE "):
+                    self.stage = self.current = line[9:]
+                    if self.stage.startswith("sampling"):
+                        self._sample_t0 = time.time()
+                        # everything before the first sampler step is "load"
+                        self._cached.setdefault("load", round(self._sample_t0 - self._t0, 2))
+                elif line.startswith("== PROGRESS "):
+                    try:
+                        frac, el = line[12:].split()
+                        done, total = (int(x) for x in frac.split("/"))
+                    except ValueError:
+                        continue
+                    self.step, self.total = done, total or self.total
+                    if done >= 1 and self._sample_t0:
+                        self._per_step = (time.time() - self._sample_t0) / done
+                        self._recalc_eta()
+                    self.current = f"sampling {done}/{total}"
+                elif line.startswith("== INFO "):
+                    self.message = line[8:]
+            rc = self.proc.wait()
+            if self.stop_flag:
+                self.state, self.message = "cancelled", "cancelled"
+                return
+            if rc != 0:
+                raise RuntimeError(" | ".join(tail[-4:]) or f"h3gen exited {rc}")
+            if not os.path.isfile(self._out):
+                raise RuntimeError("h3gen reported success but wrote no file")
+            total = time.time() - self._t0
+            _h3_eta_save(self._key, {
+                "load": round(self._cached.get("load") or 0.0, 2),
+                "per_step": round(self._per_step or 0.0, 3),
+                "decode": round(max(0.0, total - (self._cached.get("load") or 0.0)
+                                    - (self._per_step or 0.0) * self.total), 2),
+                "total": round(total, 2)})
+            self.files = [os.path.basename(self._out)]
+            self.eta = 0
+            self.state = "done"
+            self.message = f"{os.path.basename(self._out)} · {total:.0f}s"
+            self.stage = self.current = "done"
+        except Exception as e:
+            if self.stop_flag:
+                self.state, self.message = "cancelled", "cancelled"
+            else:
+                self.state, self.message = "error", str(e)[:400]
+                self.current = "failed"
+        finally:
+            self.proc = None
+            self._clean_inputs()
+
+
+def _h3_length(seconds: float) -> int:
+    """Mirror of h3gen.snap_length: 24fps snapped onto H3's 17k+5 block grid."""
+    n = max(5, round(seconds * 24))
+    return n + (5 - (n % 17)) % 17
+
+
+def _h3_wh(aspect: str, short_edge: int) -> tuple:
+    """Mirror of h3gen.compute_wh, so the ETA key matches what actually renders."""
+    ar = {"16:9": 16 / 9, "9:16": 9 / 16, "1:1": 1.0, "4:3": 4 / 3, "3:4": 3 / 4,
+          "21:9": 21 / 9, "2:3": 2 / 3, "3:2": 3 / 2}.get(aspect, 16 / 9)
+    se = max(32, min(768, round(short_edge / 32) * 32))
+    le = round(se * (ar if ar >= 1 else 1 / ar) / 32) * 32
+    le = max(se, min(1344, le))
+    return (int(le), int(se)) if ar >= 1 else (int(se), int(le))
+
+
+def h3_list() -> list:
+    out = []
+    for n in sorted(os.listdir(VIDEOS)) if os.path.isdir(VIDEOS) else []:
+        if n.lower().endswith(".mp4"):
+            p = os.path.join(VIDEOS, n)
+            out.append({"name": n, "size": os.path.getsize(p), "mtime": os.path.getmtime(p)})
+    out.sort(key=lambda x: -x["mtime"])
+    return out
+
+
+def h3_delete(name: str) -> dict:
+    p = os.path.join(VIDEOS, os.path.basename(name or ""))
+    if not os.path.isfile(p):
+        raise RuntimeError("video not found")
+    os.remove(p)
+    return {"ok": True}
+
+
+H3JOB = H3Job()
+
+
 # ---- Composer ----------------------------------------------------------------
 # "Figure out which instruments the song needs, find free plugins for them under
 # 800 MB, then compose/mix/automate it in a DAW" — done entirely on this machine:
@@ -4325,6 +4763,10 @@ POST_ROUTES = {
     "/api/lullaby_render": lambda d: LULLABYJOB.render(d),
     # Track Splitter
     "/api/split_start": lambda d: SPLITJOB.start(d),
+    # Video (MiniMax H3)
+    "/api/h3_start": lambda d: H3JOB.start(d),
+    "/api/h3_cancel": lambda d: H3JOB.cancel(),
+    "/api/h3_delete": lambda d: h3_delete(d.get("name", "")),
     # Sprite Studio
     "/api/sprite_start": lambda d: SPRITEJOB.start(d),
     "/api/sprite_cancel": lambda d: SPRITEJOB.cancel(),
@@ -4601,6 +5043,18 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(404, json.dumps({"error": str(e)}))
         elif self.path.startswith("/compositions/"):
             self._serve_composition_file()
+        elif self.path == "/api/h3_status":
+            self._send(200, json.dumps(H3JOB.status()))
+        elif self.path == "/api/h3_list":
+            self._send(200, json.dumps({"videos": h3_list()}))
+        elif self.path.startswith("/api/h3_file"):
+            from urllib.parse import urlparse, parse_qs
+            name = (parse_qs(urlparse(self.path).query).get("name", [""]) or [""])[0]
+            p = os.path.join(VIDEOS, os.path.basename(name))
+            if os.path.isfile(p):
+                self._serve_range(p, "video/mp4")   # ranged: the player must seek
+            else:
+                self._send(404, json.dumps({"error": "not found"}))
         elif self.path == "/api/sprite_status":
             self._send(200, json.dumps(SPRITEJOB.status()))
         elif self.path.startswith("/api/sprite_zip"):
@@ -4671,7 +5125,7 @@ if __name__ == "__main__":
     ThreadingHTTPServer((host, port), Handler).serve_forever()
 ```
 
-## File 2 of 27 — `%USERPROFILE%\local-ai-studio\spritekit.py`
+## File 2 of 28 — `%USERPROFILE%\local-ai-studio\spritekit.py`
 
 ```python
 #!/usr/bin/env python3
@@ -4833,7 +5287,584 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-## File 3 of 27 — `%USERPROFILE%\local-ai-studio\composerkit.py`
+## File 3 of 28 — `%USERPROFILE%\local-ai-studio\h3gen.py`
+
+```python
+#!/usr/bin/env python
+"""Generate video with native audio using MiniMax H3 via ComfyUI.
+
+H3 is one model with two heads, and which one you want depends on the inputs:
+
+  fl2va  — text -> video, plus optional first/last keyframes (modes t2v, flf)
+  ref2va — reference-conditioned: up to 9 images, 3 videos (each with its own
+           optional soundtrack) and 3 standalone audio clips (mode ref)
+
+Both emit video *and* stereo audio from one sampler pass — the audio is not a
+second model bolted on, so there is nothing to mux afterwards.
+
+Tuned for a 16GB card: the Q3_K_M GGUF unets stream through VRAM from RAM via
+ComfyUI's per-module partial loading, SageAttention replaces the attention
+kernels, and EasyCache skips redundant sampler steps. H3 is CFG-distilled, so
+this uses BasicGuider (no negative prompt, no CFG) — raising cfg does nothing
+but slow it down.
+
+Run:  python h3gen.py --mode t2v --prompt "..." --out clip.mp4
+"""
+import argparse
+import base64
+import json
+import math
+import os
+import shutil
+import socket
+import struct
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+import uuid
+
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
+COMFY = os.environ.get("COMFYUI_URL", "http://127.0.0.1:8188").rstrip("/")
+HOME = os.path.expanduser("~")
+# ComfyUI runs with --base-directory Documents/ComfyUI -> its input/output dirs.
+INPUT_DIR = os.environ.get("COMFYUI_INPUT") or os.path.join(HOME, "Documents", "ComfyUI", "input")
+OUTPUT_DIR = os.environ.get("COMFYUI_OUTPUT") or os.path.join(HOME, "Documents", "ComfyUI", "output")
+
+# Official pruned int8. Measured against the Q3_K_M GGUF at 1344x768/20 steps,
+# same seed: int8 renders the actual subject (a figure climbing, boots on the
+# grating) where Q3 collapsed into abstract dark geometry — and int8 was also
+# FASTER, 573s vs 779s. Two reasons the GGUF lost on speed as well as quality:
+# comfy-kitchen has a fused dequantize_int8_convrot CUDA kernel (live since the
+# cu130 upgrade) while GGUF Q3_K dequantises the slow way, and int8 keeps far
+# more signal in the 20B transformer than ~3.4 bits/weight does.
+UNET_FL2VA = os.environ.get("H3_UNET_FL2VA", "minimax_h3_fl2va_pruned_int8_convrot.safetensors")
+UNET_REF2VA = os.environ.get("H3_UNET_REF2VA", "minimax_h3_ref2va_pruned_int8_convrot.safetensors")
+# NVFP4-AWQ is Blackwell-native but dequantises fine on Ada, and it is the
+# encoder the official templates use. It is unloaded before sampling starts.
+CLIP_NAME = os.environ.get("H3_CLIP", "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors")
+VAE_VIDEO = os.environ.get("H3_VAE_VIDEO", "minimax_h3_video_vae_fp16.safetensors")
+VAE_AUDIO = os.environ.get("H3_VAE_AUDIO", "minimax_h3_audio_vae_fp32.safetensors")
+
+FPS = 24.0
+CANVAS_MULTIPLE = 32          # every dimension must land on a multiple of 32
+MAX_LONG_EDGE = 1344          # H3's native canvas is 768 x 1344
+MAX_SHORT_EDGE = 768
+LATENT_GRID = 17              # frame counts must satisfy length % 17 == 5
+
+ASPECTS = {"16:9": 16 / 9, "9:16": 9 / 16, "1:1": 1.0, "4:3": 4 / 3,
+           "3:4": 3 / 4, "21:9": 21 / 9, "2:3": 2 / 3, "3:2": 3 / 2}
+
+# Stable node ids so websocket progress can be mapped back to a stage label.
+N_UNET, N_CLIP, N_VAE_V, N_VAE_A = "1", "2", "3", "4"
+N_SHIFT, N_SAGE, N_CACHE, N_COND = "5", "6", "7", "8"
+N_GUIDER, N_SAMPSEL, N_SCHED, N_NOISE, N_SAMPLER = "9", "10", "11", "12", "13"
+N_DEC_V, N_DEC_A, N_CREATE, N_SAVE = "14", "15", "16", "17"
+
+STAGE_LABELS = {
+    N_CLIP: "loading text encoder (32B — first run is slow)",
+    N_COND: "encoding prompt and references",
+    N_UNET: "loading diffusion model",
+    N_SAMPLER: "sampling video + audio",
+    N_DEC_V: "decoding video",
+    N_DEC_A: "decoding audio",
+    N_CREATE: "muxing",
+    N_SAVE: "saving",
+}
+
+NOWIN = {"creationflags": 0x08000000} if os.name == "nt" else {}
+
+
+# ---- HTTP -------------------------------------------------------------------
+def _post(path: str, obj: dict) -> dict:
+    req = urllib.request.Request(COMFY + path, data=json.dumps(obj).encode(),
+                                 headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=120) as r:
+        return json.loads(r.read().decode("utf-8"))
+
+
+def _get_json(path: str) -> dict:
+    with urllib.request.urlopen(COMFY + path, timeout=60) as r:
+        return json.loads(r.read().decode("utf-8"))
+
+
+def _get_bytes(path: str) -> bytes:
+    with urllib.request.urlopen(COMFY + path, timeout=600) as r:
+        return r.read()
+
+
+# ---- minimal stdlib WebSocket client (no websocket-client dependency) -------
+# Same shape as the one in the local-image skill's gen.py. Used only to follow
+# progress; the finished video is pulled over HTTP from /view.
+class _WS:
+    def __init__(self, sock, rest=b""):
+        self.s = sock
+        self.buf = rest
+
+    def _need(self, n):
+        while len(self.buf) < n:
+            ch = self.s.recv(65536)
+            if not ch:
+                raise RuntimeError("websocket closed")
+            self.buf += ch
+
+    def _frame(self):
+        self._need(2)
+        b0, b1 = self.buf[0], self.buf[1]
+        fin = bool(b0 & 0x80); op = b0 & 0x0F
+        masked = bool(b1 & 0x80); n = b1 & 0x7F; i = 2
+        if n == 126:
+            self._need(4); n = struct.unpack(">H", self.buf[2:4])[0]; i = 4
+        elif n == 127:
+            self._need(10); n = struct.unpack(">Q", self.buf[2:10])[0]; i = 10
+        mask = b""
+        if masked:
+            self._need(i + 4); mask = self.buf[i:i + 4]; i += 4
+        self._need(i + n)
+        data = self.buf[i:i + n]; self.buf = self.buf[i + n:]
+        if masked:
+            data = bytes(c ^ mask[k % 4] for k, c in enumerate(data))
+        return fin, op, data
+
+    def send(self, op, data=b""):
+        m = os.urandom(4); n = len(data)
+        hdr = bytes([0x80 | op])
+        if n < 126:
+            hdr += bytes([0x80 | n])
+        elif n < 65536:
+            hdr += bytes([0x80 | 126]) + struct.pack(">H", n)
+        else:
+            hdr += bytes([0x80 | 127]) + struct.pack(">Q", n)
+        hdr += m
+        self.s.sendall(hdr + bytes(c ^ m[k % 4] for k, c in enumerate(data)))
+
+    def message(self):
+        op0 = None; data = b""
+        while True:
+            fin, op, payload = self._frame()
+            if op == 0x8:
+                return ("close", b"")
+            if op == 0x9:
+                self.send(0xA, payload); continue
+            if op == 0xA:
+                continue
+            if op != 0x0:
+                op0 = op; data = payload
+            else:
+                data += payload
+            if fin:
+                return ("text" if op0 == 0x1 else "binary", data)
+
+
+def _ws_open(client_id: str):
+    u = urllib.parse.urlparse(COMFY)
+    host = u.hostname or "127.0.0.1"
+    port = u.port or (443 if u.scheme == "https" else 80)
+    s = socket.create_connection((host, port), timeout=60)
+    key = base64.b64encode(os.urandom(16)).decode()
+    req = ("GET /ws?clientId=%s HTTP/1.1\r\nHost: %s:%d\r\nUpgrade: websocket\r\n"
+           "Connection: Upgrade\r\nSec-WebSocket-Key: %s\r\nSec-WebSocket-Version: 13\r\n\r\n"
+           ) % (client_id, host, port, key)
+    s.sendall(req.encode())
+    buf = b""
+    while b"\r\n\r\n" not in buf:
+        ch = s.recv(4096)
+        if not ch:
+            raise RuntimeError("websocket handshake closed")
+        buf += ch
+    head, _, rest = buf.partition(b"\r\n\r\n")
+    if b" 101 " not in head.split(b"\r\n", 1)[0]:
+        raise RuntimeError("websocket upgrade failed: "
+                           + head.split(b"\r\n", 1)[0].decode("latin1"))
+    return s, rest
+
+
+# ---- staging ----------------------------------------------------------------
+def stage(path: str) -> str:
+    """Copy a reference image/video/audio into ComfyUI's input dir; return the
+    bare filename. Prefixed h3_ so the studio can sweep them afterwards."""
+    if not os.path.isfile(path):
+        raise SystemExit(f"input not found: {path}")
+    os.makedirs(INPUT_DIR, exist_ok=True)
+    ext = os.path.splitext(path)[1] or ".png"
+    name = f"h3_{uuid.uuid4().hex}{ext}"
+    shutil.copyfile(path, os.path.join(INPUT_DIR, name))
+    return name
+
+
+def sweep_inputs():
+    """Delete this run's staged inputs. Best-effort: a file can be briefly
+    locked on Windows (AV scan) right after ComfyUI releases it."""
+    try:
+        for n in os.listdir(INPUT_DIR):
+            if n.startswith("h3_"):
+                try:
+                    os.remove(os.path.join(INPUT_DIR, n))
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+
+# ---- geometry ---------------------------------------------------------------
+def snap_length(seconds: float) -> int:
+    """Frame count at 24fps snapped up onto H3's 17k+5 block grid.
+    5s -> 124 frames, which is the model's default and the low end of its
+    trained range (~124-362, i.e. ~5-15s)."""
+    n = max(5, round(seconds * FPS))
+    return n + (5 - (n % LATENT_GRID)) % LATENT_GRID
+
+
+def compute_wh(aspect: str, short_edge: float) -> tuple[int, int]:
+    """32-aligned canvas with the SHORT edge at `short_edge`, long edge following
+    the aspect, capped at H3's 1344x768 native canvas.
+
+    Sized by short edge rather than megapixels on purpose: H3 is trained at 768
+    short edge, and a megapixel target quietly lands beside it (1.0MP at 16:9
+    gives 1344x736 — 32px under native, on the axis that matters). 768 at 16:9
+    gives exactly the 1344x768 the official templates use.
+    """
+    ar = ASPECTS.get(aspect)
+    if ar is None:
+        raise SystemExit(f"unknown aspect {aspect!r}; pick one of {', '.join(ASPECTS)}")
+    se = max(CANVAS_MULTIPLE, min(MAX_SHORT_EDGE, round(short_edge / CANVAS_MULTIPLE) * CANVAS_MULTIPLE))
+    le = round(se * (ar if ar >= 1 else 1 / ar) / CANVAS_MULTIPLE) * CANVAS_MULTIPLE
+    le = max(se, min(MAX_LONG_EDGE, le))
+    return (int(le), int(se)) if ar >= 1 else (int(se), int(le))
+
+
+# ---- graph ------------------------------------------------------------------
+def build_graph(a, seed: int) -> dict:
+    """UnetLoaderGGUF -> sigma shift -> [sage] -> [easycache] -> BasicGuider,
+    with the H3 conditioning node producing both the positive conditioning and
+    the empty AV latent, then a split decode (video VAE + audio VAE) muxed into
+    one file."""
+    ref_mode = a.mode == "ref"
+    unet = a.unet or (UNET_REF2VA if ref_mode else UNET_FL2VA)
+    # .gguf needs ComfyUI-GGUF's loader; .safetensors goes through the core one.
+    # Both produce the same MODEL, so everything downstream is identical.
+    loader = ({"class_type": "UnetLoaderGGUF", "inputs": {"unet_name": unet}}
+              if unet.lower().endswith(".gguf") else
+              {"class_type": "UNETLoader",
+               "inputs": {"unet_name": unet, "weight_dtype": "default"}})
+    g = {
+        N_UNET: loader,
+        N_CLIP: {"class_type": "CLIPLoader",
+                 "inputs": {"clip_name": CLIP_NAME, "type": "minimax", "device": "default"}},
+        N_VAE_V: {"class_type": "VAELoader", "inputs": {"vae_name": VAE_VIDEO}},
+        N_VAE_A: {"class_type": "VAELoader", "inputs": {"vae_name": VAE_AUDIO}},
+        # shift_video/shift_audio are the flow-matching sigma shifts; the
+        # defaults (12/3) are what the official templates ship.
+        N_SHIFT: {"class_type": "MiniMaxH3SigmaShift",
+                  "inputs": {"model": [N_UNET, 0], "shift_video": a.shift_video,
+                             "shift_audio": a.shift_audio}},
+    }
+
+    model_ref = [N_SHIFT, 0]
+    if a.sage != "disabled":
+        # Patches comfy's global attention on pre-run and reverts on cleanup, so
+        # it does not leak into the studio's other ComfyUI jobs (ACE-Step etc.)
+        # the way the --use-sage-attention launch flag would.
+        g[N_SAGE] = {"class_type": "PathchSageAttentionKJ",
+                     "inputs": {"model": model_ref, "sage_attention": a.sage}}
+        model_ref = [N_SAGE, 0]
+    if a.easycache:
+        g[N_CACHE] = {"class_type": "EasyCache",
+                      "inputs": {"model": model_ref, "reuse_threshold": a.easycache_threshold,
+                                 "start_percent": a.easycache_start,
+                                 "end_percent": a.easycache_end, "verbose": False}}
+        model_ref = [N_CACHE, 0]
+
+    width, height = a.width, a.height
+    length = a.length
+
+    if ref_mode:
+        cond = {"class_type": "MiniMaxH3ReferenceToVideo",
+                "inputs": {"clip": [N_CLIP, 0], "vae": [N_VAE_V, 0], "audio_vae": [N_VAE_A, 0],
+                           "prompt": a.prompt, "width": width, "height": height,
+                           "length": length, "ref_image_size": a.ref_image_size}}
+        nid = 100
+        # Autogrow (COMFY_AUTOGROW_V3) inputs are addressed by DOTTED PATH in the
+        # API graph — "<autogrow input id>.<prefix><index>", e.g.
+        # ref_images.ref_image_0. Not the bare ref_image_0 the node's execute()
+        # kwargs suggest: the executor regroups the dotted keys into one dict per
+        # autogrow input before calling it. Confirmed against ComfyUI's own
+        # video_minimax_h3_r2v.json template.
+        # ref_video_audios.ref_video_audio_N is index-paired to ref_videos.ref_video_N.
+        for i, p in enumerate(a.ref_image or []):
+            g[str(nid)] = {"class_type": "LoadImage", "inputs": {"image": stage(p)}}
+            cond["inputs"][f"ref_images.ref_image_{i}"] = [str(nid), 0]; nid += 1
+        for i, p in enumerate(a.ref_video or []):
+            g[str(nid)] = {"class_type": "VHS_LoadVideo",
+                           "inputs": {"video": stage(p), "force_rate": FPS,
+                                      "custom_width": 0, "custom_height": 0,
+                                      "frame_load_cap": length, "skip_first_frames": 0,
+                                      "select_every_nth": 1}}
+            cond["inputs"][f"ref_videos.ref_video_{i}"] = [str(nid), 0]; nid += 1
+        for i, p in enumerate(a.ref_video_audio or []):
+            g[str(nid)] = {"class_type": "LoadAudio", "inputs": {"audio": stage(p)}}
+            cond["inputs"][f"ref_video_audios.ref_video_audio_{i}"] = [str(nid), 0]; nid += 1
+        for i, p in enumerate(a.ref_audio or []):
+            g[str(nid)] = {"class_type": "LoadAudio", "inputs": {"audio": stage(p)}}
+            cond["inputs"][f"ref_audios.ref_audio_{i}"] = [str(nid), 0]; nid += 1
+        g[N_COND] = cond
+    else:
+        cond = {"class_type": "MiniMaxH3ImageToVideo",
+                "inputs": {"clip": [N_CLIP, 0], "vae": [N_VAE_V, 0], "prompt": a.prompt,
+                           "width": width, "height": height, "length": length}}
+        nid = 100
+        for key, p in (("first_frame", a.first_frame), ("last_frame", a.last_frame)):
+            if p:
+                g[str(nid)] = {"class_type": "LoadImage", "inputs": {"image": stage(p)}}
+                cond["inputs"][key] = [str(nid), 0]; nid += 1
+        g[N_COND] = cond
+
+    g[N_GUIDER] = {"class_type": "BasicGuider",
+                   "inputs": {"model": model_ref, "conditioning": [N_COND, 0]}}
+    g[N_SAMPSEL] = {"class_type": "KSamplerSelect", "inputs": {"sampler_name": a.sampler}}
+    g[N_SCHED] = {"class_type": "BasicScheduler",
+                  "inputs": {"model": model_ref, "scheduler": a.scheduler,
+                             "steps": a.steps, "denoise": 1.0}}
+    g[N_NOISE] = {"class_type": "RandomNoise", "inputs": {"noise_seed": seed}}
+    g[N_SAMPLER] = {"class_type": "SamplerCustomAdvanced",
+                    "inputs": {"noise": [N_NOISE, 0], "guider": [N_GUIDER, 0],
+                               "sampler": [N_SAMPSEL, 0], "sigmas": [N_SCHED, 0],
+                               "latent_image": [N_COND, 1]}}
+    g[N_DEC_V] = {"class_type": "VAEDecode",
+                  "inputs": {"samples": [N_SAMPLER, 0], "vae": [N_VAE_V, 0]}}
+    g[N_DEC_A] = {"class_type": "VAEDecodeAudio",
+                  "inputs": {"samples": [N_SAMPLER, 0], "vae": [N_VAE_A, 0]}}
+    g[N_CREATE] = {"class_type": "CreateVideo",
+                   "inputs": {"images": [N_DEC_V, 0], "fps": FPS, "audio": [N_DEC_A, 0]}}
+    # Unique prefix per run. Two identical submissions (same seed, same settings)
+    # would otherwise be a whole-graph cache hit in ComfyUI, which replays the
+    # previous outputs list — pointing at the file we already deleted below, so
+    # /view 404s. Varying only the save node's inputs keeps every expensive node
+    # cached (an identical re-render stays fast) while forcing SaveVideo to
+    # re-execute and produce a file that actually exists.
+    g[N_SAVE] = {"class_type": "SaveVideo",
+                 "inputs": {"video": [N_CREATE, 0],
+                            "filename_prefix": "studio_h3/h3_" + uuid.uuid4().hex[:12],
+                            "format": a.format, "codec": a.codec}}
+    return g
+
+
+# ---- run --------------------------------------------------------------------
+def emit(line: str):
+    print(line, flush=True)
+
+
+def run(graph: dict, timeout: int, progress: bool) -> bytes:
+    """Submit, follow progress over the websocket, then fetch the saved video.
+
+    Progress markers (consumed by server.py's H3Job):
+      == STAGE <label>
+      == PROGRESS <done>/<total> <elapsed_seconds>
+    """
+    client_id = uuid.uuid4().hex
+    sock, rest = _ws_open(client_id)
+    ws = _WS(sock, rest)
+    started = time.time()
+    try:
+        sock.settimeout(timeout)
+        pid = _post("/prompt", {"prompt": graph, "client_id": client_id}).get("prompt_id")
+        if not pid:
+            raise RuntimeError("ComfyUI accepted no prompt (are the H3 models installed?)")
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            kind, payload = ws.message()
+            if kind == "close":
+                break
+            if kind != "text":
+                continue
+            msg = json.loads(payload.decode("utf-8"))
+            t = msg.get("type"); d = msg.get("data") or {}
+            if d.get("prompt_id") not in (None, pid):
+                continue
+            if t == "executing":
+                node = d.get("node")
+                if node is None:                 # null node == this prompt is done
+                    break
+                if progress and node in STAGE_LABELS:
+                    emit(f"== STAGE {STAGE_LABELS[node]}")
+            elif t == "progress" and progress:
+                v, m = d.get("value", 0), d.get("max", 0)
+                if m:
+                    emit(f"== PROGRESS {v}/{m} {time.time() - started:.1f}")
+            elif t == "execution_error":
+                raise RuntimeError("ComfyUI execution error: "
+                                   + str(d.get("exception_message", ""))[:400])
+        else:
+            raise RuntimeError(f"timed out after {timeout}s waiting for ComfyUI")
+    finally:
+        try:
+            sock.close()
+        except Exception:
+            pass
+
+    hist = _get_json(f"/history/{pid}")
+    entry = hist.get(pid) or {}
+    status = entry.get("status") or {}
+    if status.get("status_str") == "error":
+        msgs = [m[1].get("exception_message", "") for m in status.get("messages", [])
+                if m and m[0] == "execution_error"]
+        raise RuntimeError("ComfyUI execution error: " + ("; ".join(msgs) or "unknown")[:400])
+    out = (entry.get("outputs") or {}).get(N_SAVE) or {}
+    files = []
+    for key in ("images", "video", "videos", "gifs"):
+        files.extend(out.get(key) or [])
+    if not files:
+        raise RuntimeError(f"no video in ComfyUI outputs (got keys: {list(out)})")
+    f = files[0]
+    q = urllib.parse.urlencode({"filename": f["filename"], "subfolder": f.get("subfolder", ""),
+                                "type": f.get("type", "output")})
+    blob = _get_bytes("/view?" + q)
+    # nothing lingers in ComfyUI's output dir — the studio owns the artefact
+    path = os.path.join(OUTPUT_DIR, f.get("subfolder", ""), f["filename"])
+    for _ in range(5):
+        try:
+            os.remove(path); break
+        except FileNotFoundError:
+            break
+        except Exception:
+            time.sleep(0.6)
+    return blob
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="Generate video+audio with MiniMax H3 via ComfyUI.")
+    ap.add_argument("--mode", choices=["t2v", "flf", "ref"], default="t2v",
+                    help="t2v: prompt only · flf: first/last keyframes · ref: image/video/audio references")
+    ap.add_argument("--prompt", required=True,
+                    help="reference inputs are addressed in-prompt as <Picture 1>, <Video 1>, <Audio 1>")
+    ap.add_argument("--aspect", default="16:9", help="|".join(ASPECTS))
+    # 768 is H3's native short edge, and it is not merely "nicer": below native the
+    # model composes a pretty scene and then barely animates it. Same prompt/seed
+    # at 480 vs 768 measured 89/100 near-static frames vs 0/100. ComfyUI's template
+    # ships a 0.4MP (~480p) selector so it runs on small cards; that is an
+    # accessibility default, not a quality one.
+    ap.add_argument("--short-edge", type=int, default=768,
+                    help="768 = native (motion needs this) · 480/384 = draft only")
+    ap.add_argument("--width", type=int, default=0, help="override --aspect/--megapixels")
+    ap.add_argument("--height", type=int, default=0)
+    ap.add_argument("--seconds", type=float, default=5.0, help="snapped onto the 17k+5 frame grid")
+    ap.add_argument("--length", type=int, default=0, help="explicit frame count (overrides --seconds)")
+    ap.add_argument("--first-frame", default=None)
+    ap.add_argument("--last-frame", default=None)
+    ap.add_argument("--ref-image", action="append", help="repeatable, max 9")
+    ap.add_argument("--ref-video", action="append", help="repeatable, max 3")
+    ap.add_argument("--ref-video-audio", action="append",
+                    help="repeatable, max 3; index-paired with --ref-video")
+    ap.add_argument("--ref-audio", action="append", help="repeatable, max 3")
+    ap.add_argument("--ref-image-size", choices=["match", "max"], default="match",
+                    help="max keeps 2048px identity fidelity but is several times slower")
+    ap.add_argument("--steps", type=int, default=25)
+    ap.add_argument("--seed", type=int, default=-1)
+    ap.add_argument("--shift-video", type=float, default=12.0)
+    ap.add_argument("--shift-audio", type=float, default=3.0)
+    ap.add_argument("--sampler", default="res_multistep")
+    ap.add_argument("--scheduler", default="simple")
+    # Default off, against the usual advice, because it was measured on this box:
+    # 832x480/124f/20 steps -> baseline 261s, +sage 260s, +easycache 160s, both 164s.
+    # H3 at Q3_K_M leaves ~8GB of the unet offloaded to system RAM, so every step
+    # is waiting on PCIe rather than on attention math; quantised attention has no
+    # stall to fill and its own quantise/dequantise cost makes stacking it slightly
+    # negative. Kept selectable: on hardware that fits the model in VRAM (or at
+    # much higher resolutions) the balance can flip back.
+    ap.add_argument("--sage", default="disabled",
+                    choices=["disabled", "auto", "sageattn_qk_int8_pv_fp16_cuda",
+                             "sageattn_qk_int8_pv_fp16_triton", "sageattn_qk_int8_pv_fp8_cuda"],
+                    help="measured no gain on a 16GB card (offload-bound); fp8 needs sm89+")
+    # Off by default: it is 1.63x faster on wall-clock but measurably degrades the
+    # AUDIO. Same seed, 20 steps: baseline -40.7dB mean / -26.9dB peak, EasyCache
+    # -49.8 / -34.4. Picture and sound share one latent and the skip decision is
+    # driven by the overall change rate, which the video channels dominate — so
+    # steps the audio branch still needed get skipped.
+    ap.add_argument("--easycache", dest="easycache", action="store_true", default=False,
+                    help="1.63x faster but costs ~9dB of generated audio")
+    ap.add_argument("--no-easycache", dest="easycache", action="store_false")
+    ap.add_argument("--easycache-threshold", type=float, default=0.2)
+    ap.add_argument("--easycache-start", type=float, default=0.15)
+    ap.add_argument("--easycache-end", type=float, default=0.95)
+    ap.add_argument("--unet", default=None,
+                    help="override the diffusion model file; .gguf uses the GGUF loader, "
+                         ".safetensors the core one (e.g. minimax_h3_fl2va_pruned_int8_convrot.safetensors)")
+    ap.add_argument("--format", default="auto")
+    ap.add_argument("--codec", default="auto")
+    ap.add_argument("--timeout", type=int, default=3600)
+    ap.add_argument("--progress", action="store_true", help="emit == STAGE / == PROGRESS markers")
+    ap.add_argument("--keep-inputs", action="store_true", help="do not sweep staged inputs")
+    ap.add_argument("--dry-run", action="store_true", help="print the graph and exit")
+    ap.add_argument("--out", required=True, help="output path, or - for a JSON line with a data URL")
+    a = ap.parse_args()
+
+    caps = (("ref_image", 9), ("ref_video", 3), ("ref_video_audio", 3), ("ref_audio", 3))
+    for name, cap in caps:
+        vals = getattr(a, name) or []
+        if len(vals) > cap:
+            return _fail(f"--{name.replace('_', '-')} takes at most {cap} (got {len(vals)})")
+    if a.mode == "ref" and not any(getattr(a, n) for n, _ in caps):
+        return _fail("--mode ref needs at least one --ref-image/--ref-video/--ref-audio")
+    if a.mode != "ref" and (a.ref_image or a.ref_video or a.ref_audio):
+        return _fail("reference inputs need --mode ref")
+    if a.mode == "t2v" and (a.first_frame or a.last_frame):
+        return _fail("--first-frame/--last-frame need --mode flf")
+    if a.mode == "flf" and not (a.first_frame or a.last_frame):
+        return _fail("--mode flf needs --first-frame and/or --last-frame")
+
+    if not a.width or not a.height:
+        a.width, a.height = compute_wh(a.aspect, a.short_edge)
+    a.length = a.length or snap_length(a.seconds)
+    if a.length % LATENT_GRID != 5:
+        a.length += (5 - (a.length % LATENT_GRID)) % LATENT_GRID
+    seed = a.seed if a.seed >= 0 else int.from_bytes(os.urandom(6), "big")
+
+    graph = build_graph(a, seed)
+    if a.dry_run:
+        print(json.dumps(graph, indent=2))
+        return 0
+
+    if a.progress:
+        emit(f"== INFO {a.width}x{a.height} {a.length}f "
+             f"({a.length / FPS:.1f}s @{FPS:.0f}fps) steps={a.steps} seed={seed} "
+             f"sage={a.sage} easycache={'on' if a.easycache else 'off'}")
+    try:
+        blob = run(graph, a.timeout, a.progress)
+    except Exception as e:
+        return _fail(str(e))
+    finally:
+        if not a.keep_inputs:
+            sweep_inputs()
+
+    if a.out == "-":
+        print(json.dumps({"video": "data:video/mp4;base64,"
+                          + base64.b64encode(blob).decode(), "seed": seed,
+                          "width": a.width, "height": a.height, "length": a.length}))
+    else:
+        os.makedirs(os.path.dirname(os.path.abspath(a.out)) or ".", exist_ok=True)
+        with open(a.out, "wb") as fh:
+            fh.write(blob)
+        if a.progress:
+            emit(f"== DONE {a.out} ({len(blob) / 1e6:.1f} MB) seed={seed}")
+    return 0
+
+
+def _fail(msg: str) -> int:
+    print("error: " + msg, file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+```
+
+## File 4 of 28 — `%USERPROFILE%\local-ai-studio\composerkit.py`
 
 ```python
 #!/usr/bin/env python3
@@ -7096,7 +8127,7 @@ if __name__ == "__main__":
     sys.exit(main())
 ```
 
-## File 4 of 27 — `%USERPROFILE%\local-ai-studio\sf3convert.py`
+## File 5 of 28 — `%USERPROFILE%\local-ai-studio\sf3convert.py`
 
 ```python
 #!/usr/bin/env python3
@@ -7373,7 +8404,7 @@ if __name__ == "__main__":
     sys.exit(main())
 ```
 
-## File 5 of 27 — `%USERPROFILE%\local-ai-studio\lullabykit\pipeline.py`
+## File 6 of 28 — `%USERPROFILE%\local-ai-studio\lullabykit\pipeline.py`
 
 ```python
 """
@@ -8755,7 +9786,7 @@ if __name__ == "__main__":
     main()
 ```
 
-## File 6 of 27 — `%USERPROFILE%\local-ai-studio\index.html`
+## File 7 of 28 — `%USERPROFILE%\local-ai-studio\index.html`
 
 ```html
 <!doctype html>
@@ -8784,7 +9815,7 @@ if __name__ == "__main__":
     --success:#3fcf7f; --warn:#fbbf24; --danger:#f4685f; --info:#5aa7ff;
     --success-soft:rgba(63,207,127,.13); --danger-soft:rgba(244,104,95,.13);
     /* domain hues (icons / active indicator only) */
-    --hue-text:#5aa7ff; --hue-image:#a78bfa; --hue-voice:#34d399; --hue-story:#fbbf24; --hue-home:#7b6cf6; --hue-music:#f472b6;
+    --hue-text:#5aa7ff; --hue-image:#a78bfa; --hue-voice:#34d399; --hue-story:#fbbf24; --hue-home:#7b6cf6; --hue-music:#f472b6; --hue-video:#fb7185;
     /* spacing (8pt) */
     --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:24px; --s6:32px; --s7:48px;
     /* radius */
@@ -9298,7 +10329,33 @@ if __name__ == "__main__":
   .panel[data-panel="music"],.panel[data-panel="lullaby"]{--tone:var(--hue-music)}
   .panel[data-panel="stt"],.panel[data-panel="tts"],.panel[data-panel="voicestudio"],.panel[data-panel="audiobook"]{--tone:var(--hue-voice)}
   .panel[data-panel="story"]{--tone:var(--hue-story)}
+  .panel[data-panel="video"]{--tone:var(--hue-video)}
   .panel[data-panel="home"]{--tone:var(--hue-home)}
+  /* Video tab: reference slots (up to 9 images / 3 videos / 3 audio) */
+  .refgrid{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
+  .refslot{position:relative;width:74px;height:74px;border-radius:9px;overflow:hidden;
+           border:1px solid var(--line);background:var(--panel2);display:flex;
+           align-items:center;justify-content:center;font-size:11px;color:var(--dim);text-align:center}
+  .refslot img,.refslot video{width:100%;height:100%;object-fit:cover}
+  .refslot .rm{position:absolute;top:2px;right:2px;width:18px;height:18px;line-height:16px;
+               border-radius:50%;border:0;background:rgba(0,0,0,.66);color:#fff;cursor:pointer;font-size:12px;padding:0}
+  .refslot .tagname{position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,.62);
+                    color:#fff;font-size:10px;padding:1px 3px;letter-spacing:.02em}
+  /* a soundtrack with no video of the same index — the model will ignore it */
+  .refslot.dead{border-color:#c0392b;opacity:.55}
+  .refslot.dead .tagname{background:#c0392b}
+  .etabar{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;font-size:12px;color:var(--dim);margin-top:4px}
+  .etabar b{color:var(--fg);font-variant-numeric:tabular-nums}
+  .licnote{font-size:11.5px;line-height:1.5;color:var(--dim);border:1px solid var(--line);
+           border-left:3px solid var(--hue-video);border-radius:8px;padding:8px 10px;margin-top:10px}
+  .vidrow{display:flex;gap:8px;align-items:center;padding:4px 0;border-bottom:1px solid var(--line)}
+  .vidrow:last-child{border-bottom:0}
+  .vidrow a{flex:1;color:var(--fg);text-decoration:none;cursor:pointer;font-size:12.5px;
+            overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .vidrow a:hover{color:var(--hue-video);text-decoration:underline}
+  .vidrow .del{width:20px;height:20px;line-height:18px;border-radius:50%;border:1px solid var(--line);
+               background:transparent;color:var(--dim);cursor:pointer;font-size:12px;padding:0;flex:none}
+  .vidrow .del:hover{color:#fff;background:#c0392b;border-color:#c0392b}
   .panel{
     --accent:var(--tone,#7b6cf6);
     --accent-hover:color-mix(in srgb,var(--tone,#7b6cf6) 82%,#fff);
@@ -9481,6 +10538,14 @@ if __name__ == "__main__":
         <div class="navitem" data-tab="sprite" data-title="Sprite Studio" style="--ico:var(--hue-image)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
           <span>Sprites</span>
+        </div>
+      </div>
+
+      <div class="navgroup">
+        <div class="navlabel">Video</div>
+        <div class="navitem" data-tab="video" data-title="Video — MiniMax H3" style="--ico:var(--hue-video)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="14" height="14" rx="2"/><path d="m22 8-6 4 6 4z"/></svg>
+          <span>Video</span>
         </div>
       </div>
 
@@ -10354,6 +11419,180 @@ if __name__ == "__main__":
         </div>
       </section>
 
+      <!-- ===================== VIDEO (MiniMax H3) ===================== -->
+      <section class="panel" data-panel="video">
+        <div class="view view-wide">
+          <div class="hero">
+            <span class="hico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="14" height="14" rx="2"/><path d="m22 8-6 4 6 4z"/></svg></span>
+            <div><h1>Video</h1><div class="tag">MiniMax H3 — video <b>with native stereo audio</b>, generated together in one pass</div></div>
+            <div class="loadbar">
+              <button class="load" id="vidLoad" onclick="loadModel('video')">Load model</button>
+              <button class="stop hide" id="vidStop" onclick="stopModel('video')">Stop model</button>
+              <span class="loadstat" id="vidStat"><span class="dot"></span>not loaded</span>
+            </div>
+          </div>
+          <div class="ws">
+            <div class="ws-ctl">
+              <div class="card">
+                <fieldset id="vidFs" disabled>
+                  <div class="field"><label>What to make</label><br>
+                    <div class="seg" id="vidModeSeg">
+                      <button type="button" class="active" data-mode="t2v" onclick="vidSetMode('t2v')">Text → video</button>
+                      <button type="button" data-mode="flf" onclick="vidSetMode('flf')">First / last frame</button>
+                      <button type="button" data-mode="ref" onclick="vidSetMode('ref')">References</button>
+                    </div>
+                  </div>
+
+                  <div class="field"><label>Prompt — describe the shot, the motion and the sound</label>
+                    <textarea id="vidPrompt" rows="4" placeholder="A lighthouse keeper climbs a spiral staircase at dawn, camera following from behind. Waves crash outside; his boots echo on the metal steps."></textarea>
+                    <div class="note" id="vidTagHint"></div>
+                  </div>
+
+                  <!-- first / last keyframes -->
+                  <div id="vidFlf" class="hide">
+                    <div class="row">
+                      <div class="field"><label>First frame</label>
+                        <label class="filedrop"><input type="file" id="vidFirst" accept="image/*" onchange="vidKeyPreview()"><span class="filedrop-name"></span></label></div>
+                      <div class="field"><label>Last frame <span class="note">(optional)</span></label>
+                        <label class="filedrop"><input type="file" id="vidLast" accept="image/*" onchange="vidKeyPreview()"><span class="filedrop-name"></span></label></div>
+                    </div>
+                    <div class="refgrid" id="vidKeyThumbs"></div>
+                    <div class="note">With both set, H3 interpolates between them. First frame alone is plain image → video.</div>
+                  </div>
+
+                  <!-- references: images / videos / audio -->
+                  <div id="vidRef" class="hide">
+                    <div class="field"><label>Reference images <span class="note">(up to 9 — identity, style, props)</span></label>
+                      <label class="filedrop"><input type="file" id="vidRefImgs" accept="image/*" multiple onchange="vidAddRefs('img')"><span class="filedrop-name"></span></label>
+                      <div class="refgrid" id="vidRefImgGrid"></div>
+                    </div>
+                    <div class="field"><label>Reference videos <span class="note">(up to 3 — motion &amp; camera; 2–15s)</span></label>
+                      <label class="filedrop"><input type="file" id="vidRefVids" accept="video/*" multiple onchange="vidAddRefs('vid')"><span class="filedrop-name"></span></label>
+                      <div class="refgrid" id="vidRefVidGrid"></div>
+                    </div>
+                    <div class="field"><label>Soundtracks for those videos <span class="note">(up to 3 — slot N pairs with video N)</span></label>
+                      <label class="filedrop"><input type="file" id="vidRefVidAud" accept="audio/*" multiple onchange="vidAddRefs('vidaud')"><span class="filedrop-name"></span></label>
+                      <div class="refgrid" id="vidRefVidAudGrid"></div>
+                    </div>
+                    <div class="field"><label>Reference audio <span class="note">(up to 3 — voice to clone, music, ambience)</span></label>
+                      <label class="filedrop"><input type="file" id="vidRefAuds" accept="audio/*" multiple onchange="vidAddRefs('aud')"><span class="filedrop-name"></span></label>
+                      <div class="refgrid" id="vidRefAudGrid"></div>
+                    </div>
+                    <div class="field"><label>Reference fidelity</label>
+                      <select id="vidRefSize">
+                        <option value="match" selected>Match output size (faster)</option>
+                        <option value="max">Max detail, 2048px (several times slower)</option>
+                      </select>
+                      <div class="note">Reference tokens are re-read at every sampling step, so “max” multiplies the whole render, not just the setup.</div>
+                    </div>
+                  </div>
+
+                  <div class="row">
+                    <div class="field"><label>Aspect</label>
+                      <select id="vidAspect" onchange="vidEstimate()">
+                        <option value="16:9" selected>16:9 landscape</option>
+                        <option value="9:16">9:16 vertical</option>
+                        <option value="1:1">1:1 square</option>
+                        <option value="4:3">4:3</option>
+                        <option value="3:4">3:4</option>
+                        <option value="21:9">21:9 cinematic</option>
+                      </select></div>
+                    <div class="field"><label>Resolution</label>
+                      <select id="vidMp" onchange="vidEstimate()">
+                        <option value="768" selected>768p — native (use this)</option>
+                        <option value="608">608p — below native, motion suffers</option>
+                        <option value="480">480p — draft only, often near-static</option>
+                        <option value="384">384p — thumbnail draft</option>
+                      </select>
+                      <div class="note">H3 is trained at 768 short edge. Below it the model composes a scene then barely animates it — measured here at 0.4MP: 89 of 100 frames near-static, vs 0 of 100 at 768p on the same seed. Drafts are fine for checking composition, not motion.</div></div>
+                  </div>
+                  <div class="row">
+                    <div class="field"><label>Length <span class="note">(snaps to H3's frame grid)</span></label>
+                      <input type="number" id="vidSecs" value="5" min="1" max="15" step="0.5" oninput="vidEstimate()"></div>
+                    <div class="field"><label>Steps <span class="note">(20 = official)</span></label>
+                      <input type="number" id="vidSteps" value="20" min="4" max="60" oninput="vidEstimate()"></div>
+                  </div>
+
+                  <div class="field"><label>Name <span class="note">(saved under videos/ — blank = auto)</span></label>
+                    <input type="text" id="vidName" placeholder="e.g. lighthouse-dawn"></div>
+
+                  <details class="adv"><summary>Advanced — speed, sampler, seed</summary>
+                    <div class="adv-body">
+                      <div class="field"><label class="chk"><input type="checkbox" id="vidEasy" onchange="vidEstimate()"> EasyCache — skip redundant steps (costs audio)</label>
+                        <div class="note"><b>1.63× faster</b> (261s → 160s, skipping 8 of 20 steps) but it measurably damages the <b>sound</b>: same seed, audio fell from −40.7dB to −49.8dB mean. Picture and sound share one latent and the skip decision is dominated by the video channels, so the audio branch gets starved. Fine for silent drafts or when you only care about the picture; leave off if the audio matters.</div></div>
+                      <div class="row">
+                        <div class="field"><label>EasyCache threshold</label>
+                          <input type="number" id="vidEasyT" value="0.2" min="0" max="3" step="0.05"></div>
+                        <div class="field"><label>Attention kernel</label>
+                          <select id="vidSage">
+                            <option value="disabled" selected>Off — stock PyTorch (measured fastest here)</option>
+                            <option value="sageattn_qk_int8_pv_fp8_cuda">SageAttention FP8</option>
+                            <option value="sageattn_qk_int8_pv_fp16_cuda">SageAttention FP16</option>
+                            <option value="auto">SageAttention auto</option>
+                          </select>
+                          <div class="note">Measured on this PC at 832×480/20 steps: baseline 261s, SageAttention 260s — no gain. About 8GB of the model streams from RAM each step, so the GPU waits on PCIe, not on attention. Left available in case that changes.</div></div>
+                      </div>
+                      <div class="row">
+                        <div class="field"><label>Sampler</label>
+                          <select id="vidSampler">
+                            <option value="res_multistep" selected>res_multistep</option>
+                            <option value="euler">euler</option>
+                            <option value="dpmpp_2m">dpmpp_2m</option>
+                          </select></div>
+                        <div class="field"><label>Seed (-1 = random)</label>
+                          <input type="number" id="vidSeed" value="-1"></div>
+                      </div>
+                      <div class="row">
+                        <div class="field"><label>Sigma shift — video</label>
+                          <input type="number" id="vidShiftV" value="12" min="0.01" max="100" step="0.5"></div>
+                        <div class="field"><label>Sigma shift — audio</label>
+                          <input type="number" id="vidShiftA" value="3" min="0.01" max="100" step="0.5"></div>
+                      </div>
+                      <div class="note">H3 is guidance-distilled, so there is no CFG control — raising it would only cost time.</div>
+                    </div>
+                  </details>
+
+                  <div class="note" id="vidEstimateLine"></div>
+                  <button class="go" id="vidGo" onclick="runVideo()">✦ Generate video</button>
+                  <button class="stop hide" id="vidCancel" type="button" onclick="cancelVideo()">✕ Cancel</button>
+                  <div id="vidBarWrap" class="hide prog" style="width:100%"><div id="vidBar"></div></div>
+                  <div class="etabar hide" id="vidEta"></div>
+                  <div class="status" id="vidStatus"></div>
+
+                  <div class="licnote">
+                    Generated with <b>MiniMax H3</b> (MiniMax H3 Community Licence). The licence
+                    excludes the UK, EU, US and South Korea, and that restriction covers the videos
+                    you make, not just the model weights. Authorisation has been applied for —
+                    until it is granted, treat output as personal/local only and do not
+                    redistribute. Any commercial use must credit “MiniMax H3” on screen.
+                  </div>
+                </fieldset>
+              </div>
+            </div>
+            <div class="ws-out">
+              <div class="stage" id="vidStage" style="min-height:300px">
+                <div class="empty" id="vidEmpty">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="14" height="14" rx="2"/><path d="m22 8-6 4 6 4z"/></svg>
+                  <b>Your video appears here</b>
+                  Describe a shot, or drop in images, clips and voices to steer it. Picture and sound are generated together — there is nothing to mux afterwards.
+                </div>
+                <div class="out hide" id="vidOut" style="width:100%;border:0;background:transparent"></div>
+              </div>
+              <div class="outbar">
+                <div class="meta hide" id="vidMeta"></div>
+                <span class="spacer"></span>
+                <a id="vidDl" class="hide dlbtn">⬇ Download .mp4</a>
+              </div>
+              <div class="card" style="margin-top:10px">
+                <div class="field"><label>Library <span class="note">(videos/)</span></label>
+                  <div id="vidLib" class="note">nothing rendered yet</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <!-- ===================== STT ===================== -->
       <section class="panel" data-panel="stt">
         <div class="view view-wide">
@@ -10693,7 +11932,7 @@ const $ = id => document.getElementById(id);
 
 /* ===================== SHELL: nav, theme, palette, toasts ===================== */
 const VIEW_TONES={home:'--hue-home',lang:'--hue-text',story:'--hue-story',gen:'--hue-image',edit:'--hue-image',
-                  sprite:'--hue-image',composer:'--hue-music',music:'--hue-music',lullaby:'--hue-music',split:'--hue-music',
+                  sprite:'--hue-image',video:'--hue-video',composer:'--hue-music',music:'--hue-music',lullaby:'--hue-music',split:'--hue-music',
                   stt:'--hue-voice',tts:'--hue-voice',voicestudio:'--hue-voice',audiobook:'--hue-voice'};
 function setActiveTab(name){
   document.querySelectorAll('.navitem').forEach(x=>x.classList.toggle('active',x.dataset.tab===name));
@@ -10775,6 +12014,7 @@ const HOME_TILES=[
   {tab:'gen',t:'Generate image',d:'FLUX.2 Klein',hue:'--hue-image',ic:'<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.6"/><path d="M21 15l-5-5L5 21"/>'},
   {tab:'edit',t:'Edit image',d:'Remove · reframe · recompose',hue:'--hue-image',ic:'<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>'},
   {tab:'sprite',t:'Sprite Studio',d:'2D game sprites & sheets',hue:'--hue-image',ic:'<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>'},
+  {tab:'video',t:'Video',d:'Video + native audio · MiniMax H3',hue:'--hue-video',ic:'<rect x="2" y="5" width="14" height="14" rx="2"/><path d="m22 8-6 4 6 4z"/>'},
   {tab:'composer',t:'Composer',d:'Arrange, mix & automate a song',hue:'--hue-music',ic:'<path d="M4 20V9M9 20V4M14 20v-7M19 20v-11"/><circle cx="4" cy="20" r="1.4"/><circle cx="9" cy="20" r="1.4"/><circle cx="14" cy="20" r="1.4"/><circle cx="19" cy="20" r="1.4"/>'},
   {tab:'music',t:'Music',d:'Songs & instrumentals · ACE-Step',hue:'--hue-music',ic:'<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>'},
   {tab:'stt',t:'Speech → Text',d:'Parakeet transcription',hue:'--hue-voice',ic:'<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/>'},
@@ -10840,6 +12080,10 @@ const TABS = {
         key:()=>'image:'+$('spModel').value, params:()=>({worker:'image',model:$('spModel').value})},
   music:{fs:'muFs',load:'muLoad',stop:'muStop',stat:'muStat',
          key:()=>'music', params:()=>({worker:'music'})},
+  // H3 wants the whole GPU: loading it evicts every other model and warms nothing
+  // (a throwaway pass over a 15.6GB unet would cost minutes and buy nothing).
+  video:{fs:'vidFs',load:'vidLoad',stop:'vidStop',stat:'vidStat',
+         key:()=>'video', params:()=>({worker:'video'})},
   // no fieldset: the Composer still works with no model loaded (it arranges from
   // the style template), so the panel is never gated — only the planner is
   composer:{load:'coLoad',stop:'coStop',stat:'coStat',
@@ -11114,6 +12358,204 @@ async function spReroll(action,frame){
 spEstimate();
 // A sprite set survives a page refresh: reattach to a running/finished job on load.
 get('/api/sprite_status').then(s=>{ if(s.state==='running'||(s.files||[]).length) spPoll(); }).catch(()=>{});
+
+/* ---- Video (MiniMax H3: picture + stereo audio in one sampler pass) ---- */
+let VID_MODE='t2v', vidTimer=null;
+// Data URLs held client-side until submit. Caps mirror the model's own limits.
+const VID_REFS={img:[],vid:[],vidaud:[],aud:[]};
+const VID_CAP={img:9,vid:3,vidaud:3,aud:3};
+const VID_GRID={img:'vidRefImgGrid',vid:'vidRefVidGrid',vidaud:'vidRefVidAudGrid',aud:'vidRefAudGrid'};
+// The prompt addresses references by tag, and the numbering is per-kind and
+// 1-based — <Picture 1> is the first image, not the first attachment overall.
+const VID_TAG={img:'Picture',vid:'Video',vidaud:'Audio',aud:'Audio'};
+
+function vidSetMode(m){
+  VID_MODE=m;
+  document.querySelectorAll('#vidModeSeg button').forEach(b=>b.classList.toggle('active',b.dataset.mode===m));
+  $('vidFlf').classList.toggle('hide',m!=='flf');
+  $('vidRef').classList.toggle('hide',m!=='ref');
+  vidTagHint(); vidEstimate();
+}
+// A soundtrack is only consumed if a reference video with the SAME index exists —
+// the model looks up ref_video_audio_N while iterating ref_video_N. Extra
+// soundtracks past the video count are silently ignored by the model, so they
+// must not be counted when numbering the standalone <Audio n> tags either.
+function vidLiveSoundtracks(){ return Math.min(VID_REFS.vidaud.length, VID_REFS.vid.length); }
+function vidTagHint(){
+  const h=$('vidTagHint');
+  if(VID_MODE!=='ref'){ h.textContent = VID_MODE==='flf'
+    ? 'Describe what happens between the keyframes — motion, camera, sound.'
+    : 'Sound is generated from this prompt too, so say what you want to hear.'; return; }
+  const parts=[];
+  VID_REFS.img.forEach((_,i)=>parts.push('<Picture '+(i+1)+'>'));
+  VID_REFS.vid.forEach((_,i)=>parts.push('<Video '+(i+1)+'>'));
+  const na=vidLiveSoundtracks()+VID_REFS.aud.length;
+  for(let i=0;i<na;i++) parts.push('<Audio '+(i+1)+'>');
+  const orphans=VID_REFS.vidaud.length-vidLiveSoundtracks();
+  h.textContent = (parts.length
+    ? 'Refer to your attachments by tag: '+parts.join(' ')+'  — e.g. “<Picture 1> speaks in the voice from <Audio 1>”.'
+    : 'Attach at least one image, clip or voice below, then address it in the prompt as <Picture 1>, <Video 1> or <Audio 1>.')
+    + (orphans>0 ? (orphans===1
+        ? '  ⚠ 1 soundtrack has no matching reference video and will be ignored — add another video or remove it.'
+        : `  ⚠ ${orphans} soundtracks have no matching reference video and will be ignored — add ${orphans} more videos or remove them.`) : '');
+}
+function vidReadFiles(input,cap,have){
+  const take=[...input.files].slice(0,Math.max(0,cap-have));
+  return Promise.all(take.map(f=>new Promise((res,rej)=>{
+    const r=new FileReader(); r.onload=()=>res({data:r.result,name:f.name}); r.onerror=rej; r.readAsDataURL(f);})));
+}
+async function vidAddRefs(kind){
+  const inputs={img:'vidRefImgs',vid:'vidRefVids',vidaud:'vidRefVidAud',aud:'vidRefAuds'};
+  const el=$(inputs[kind]); const cap=VID_CAP[kind];
+  const before=VID_REFS[kind].length;
+  const got=await vidReadFiles(el,cap,before);
+  if(before+el.files.length>cap) toast(`only ${cap} allowed here — extras ignored`,'err');
+  VID_REFS[kind].push(...got); el.value='';
+  vidPaintRefs(kind); vidTagHint(); vidEstimate();
+}
+function vidRemoveRef(kind,i){ VID_REFS[kind].splice(i,1); vidPaintRefs(kind); vidTagHint(); vidEstimate(); }
+function vidPaintRefs(kind){
+  const g=$(VID_GRID[kind]); if(!g) return;
+  g.innerHTML=VID_REFS[kind].map((r,i)=>{
+    // standalone audio is numbered after the soundtracks the model will actually use
+    const n=(kind==='aud'? vidLiveSoundtracks()+i : i)+1;
+    const dead=(kind==='vidaud' && i>=VID_REFS.vid.length);
+    const tag=dead ? 'unused' : VID_TAG[kind]+' '+n;
+    const body = kind==='img' ? `<img src="${r.data}">`
+               : kind==='vid' ? `<video src="${r.data}" muted></video>`
+               : `<span style="padding:4px">♪</span>`;
+    return `<div class="refslot${dead?' dead':''}" title="${r.name}${dead?' — no matching reference video, will be ignored':''}">${body}
+      <button class="rm" onclick="vidRemoveRef('${kind}',${i})">×</button>
+      <span class="tagname">${tag}</span></div>`;}).join('');
+}
+function vidKeyPreview(){
+  const g=$('vidKeyThumbs'); const out=[];
+  [['vidFirst','first'],['vidLast','last']].forEach(([id,lbl])=>{
+    const f=$(id).files[0]; if(!f) return;
+    out.push(`<div class="refslot"><img src="${URL.createObjectURL(f)}"><span class="tagname">${lbl}</span></div>`);
+  });
+  g.innerHTML=out.join('');
+}
+// Frame count and canvas are computed the same way the backend does, so the
+// numbers on screen are the numbers that will actually render.
+function vidGeom(){
+  const AR={'16:9':16/9,'9:16':9/16,'1:1':1,'4:3':4/3,'3:4':3/4,'21:9':21/9};
+  const ar=AR[$('vidAspect').value]||16/9;
+  // sized by SHORT edge, not megapixels: H3 trains at 768 short edge and a
+  // megapixel target lands beside it (1.0MP at 16:9 = 1344x736, 32px under
+  // native on the axis that decides whether the clip moves at all).
+  const se0=Math.max(32,Math.min(768,Math.round((+$('vidMp').value||768)/32)*32));
+  let le=Math.round(se0*(ar>=1?ar:1/ar)/32)*32;
+  le=Math.max(se0,Math.min(1344,le));
+  const w = ar>=1 ? le : se0, h = ar>=1 ? se0 : le;
+  let n=Math.max(5,Math.round((+$('vidSecs').value||5)*24));
+  // JS % is a remainder and keeps the sign, Python's is a true modulo. Without
+  // the +17 wrap this snaps DOWN to the previous 17k+5 grid point whenever
+  // n%17 > 5, so the tab would quietly promise a shorter clip than the backend
+  // renders (ask for 1s: shows 22 frames, actually gets 39).
+  n=n+(((5-(n%17))%17)+17)%17;
+  return {w,h,frames:n,secs:n/24};
+}
+function vidFmt(s){ if(s==null||!isFinite(s)) return '—';
+  s=Math.max(0,Math.round(s)); const m=Math.floor(s/60); return m? `${m}m ${String(s%60).padStart(2,'0')}s` : `${s}s`; }
+function vidEstimate(){
+  const g=vidGeom();
+  $('vidEstimateLine').textContent =
+    `${g.w}×${g.h} · ${g.frames} frames · ${g.secs.toFixed(1)}s at 24fps · ${$('vidSteps').value} steps`
+    + (VID_MODE==='ref'&&$('vidRefSize').value==='max' ? ' · max-detail refs will be several times slower' : '');
+}
+async function runVideo(){
+  const prompt=$('vidPrompt').value.trim();
+  if(!prompt){ setStatus('vidStatus','describe the shot first','err'); return; }
+  const body={mode:VID_MODE,prompt:prompt,aspect:$('vidAspect').value,short_edge:+$('vidMp').value,
+    seconds:+$('vidSecs').value,steps:+$('vidSteps').value,seed:+$('vidSeed').value,
+    name:$('vidName').value.trim(),sage:$('vidSage').value,easycache:$('vidEasy').checked,
+    easycache_threshold:+$('vidEasyT').value,sampler:$('vidSampler').value,
+    shift_video:+$('vidShiftV').value,shift_audio:+$('vidShiftA').value,
+    ref_image_size:$('vidRefSize').value};
+  if(VID_MODE==='flf'){
+    const a=await fileB64($('vidFirst')), b=await fileB64($('vidLast'));
+    if(!a&&!b){ setStatus('vidStatus','add a first and/or last frame','err'); return; }
+    if(a) body.first_frame=a; if(b) body.last_frame=b;
+  }else if(VID_MODE==='ref'){
+    body.ref_images=VID_REFS.img.map(r=>r.data);
+    body.ref_videos=VID_REFS.vid.map(r=>r.data);
+    body.ref_video_audios=VID_REFS.vidaud.map(r=>r.data);
+    body.ref_audios=VID_REFS.aud.map(r=>r.data);
+    if(!(body.ref_images.length+body.ref_videos.length+body.ref_audios.length)){
+      setStatus('vidStatus','attach at least one image, clip or voice','err'); return; }
+  }
+  $('vidGo').classList.add('hide'); $('vidCancel').classList.remove('hide');
+  $('vidBarWrap').classList.remove('hide'); $('vidBar').style.width='0%';
+  $('vidEta').classList.remove('hide'); $('vidEta').innerHTML='<span>estimating…</span>';
+  setStatus('vidStatus','starting…','run'); stageBusy('vidStage',true);
+  try{ await post('/api/h3_start',body); vidPoll(); }
+  catch(e){ setStatus('vidStatus',e.message,'err'); vidDone(); }
+}
+async function cancelVideo(){ try{ await post('/api/h3_cancel',{}); setStatus('vidStatus','cancelling…','run'); }catch(e){} }
+function vidDone(){
+  $('vidGo').classList.remove('hide'); $('vidCancel').classList.add('hide');
+  stageBusy('vidStage',false);
+}
+async function vidPoll(){
+  clearTimeout(vidTimer);
+  try{
+    const s=await get('/api/h3_status');
+    const pct=s.total?Math.round((s.step/s.total)*100):0;
+    $('vidBar').style.width=pct+'%';
+    if(s.state==='running'){
+      $('vidGo').classList.add('hide'); $('vidCancel').classList.remove('hide');
+      $('vidBarWrap').classList.remove('hide'); $('vidEta').classList.remove('hide');
+      stageBusy('vidStage',true);
+      // A real ETA or nothing — never a fake percentage. Until the sampler has
+      // done one step on a geometry we've never timed, we say so plainly.
+      $('vidEta').innerHTML =
+        `<span>elapsed <b>${vidFmt(s.elapsed)}</b></span>`
+        + (s.eta!=null ? `<span>remaining <b>~${vidFmt(s.eta)}</b></span>`
+                       : `<span>remaining <b>measuring…</b></span>`)
+        + (s.step?`<span>step <b>${s.step}/${s.total}</b></span>`:'')
+        + (s.stage?`<span>${s.stage}</span>`:'');
+      setStatus('vidStatus',s.current||'working…','run');
+      vidTimer=setTimeout(vidPoll,1500); return;
+    }
+    if(s.state==='done'){
+      $('vidBar').style.width='100%';
+      $('vidEta').innerHTML=`<span>took <b>${vidFmt(s.elapsed)}</b></span>`;
+      setStatus('vidStatus','✓ '+(s.message||'done'),'ok');
+      vidShow((s.files||[])[0]);
+    }
+    else if(s.state==='error'){ setStatus('vidStatus','Error: '+s.message,'err'); $('vidEta').classList.add('hide'); }
+    else if(s.state==='cancelled'){ setStatus('vidStatus','Cancelled','ok'); $('vidEta').classList.add('hide'); }
+    vidDone(); vidLib();
+  }catch(e){ vidTimer=setTimeout(vidPoll,3000); }
+}
+function vidShow(file){
+  if(!file) return;
+  const url='/api/h3_file?name='+encodeURIComponent(file);
+  $('vidEmpty').classList.add('hide'); $('vidStage').classList.add('hasresult');
+  $('vidOut').classList.remove('hide');
+  $('vidOut').innerHTML=`<video src="${url}" controls autoplay loop playsinline style="width:100%;border-radius:10px"></video>`;
+  $('vidDl').href=url; $('vidDl').setAttribute('download',file); $('vidDl').classList.remove('hide');
+  $('vidMeta').innerHTML=`<span>saved to <b>videos/${file}</b></span>`; $('vidMeta').classList.remove('hide');
+}
+async function vidLib(){
+  try{
+    const r=await get('/api/h3_list'); const v=r.videos||[];
+    $('vidLib').innerHTML = v.length ? v.map(x=>{
+      const n=x.name.replace(/'/g,"\\'");
+      return `<div class="vidrow">
+         <a onclick="vidShow('${n}');return false;" title="${x.name}">${x.name}</a>
+         <span class="note">${(x.size/1e6).toFixed(1)} MB</span>
+         <button class="del" title="Delete" onclick="vidDelete('${n}')">×</button>
+       </div>`;}).join('') : 'nothing rendered yet';
+  }catch(e){}
+}
+async function vidDelete(name){
+  try{ await post('/api/h3_delete',{name:name}); vidLib(); }catch(e){ toast(e.message,'err'); }
+}
+vidSetMode('t2v'); vidEstimate(); vidLib();
+// A render survives a page refresh: reattach to a running/finished job on load.
+get('/api/h3_status').then(s=>{ if(s.state==='running') vidPoll(); else if((s.files||[]).length) vidShow(s.files[0]); }).catch(()=>{});
 
 /* ---- Composer (brief -> arranged, mixed, automated song) ---- */
 let coTimer=null, CO_LIB=null;
@@ -12671,7 +14113,7 @@ STORY=stBlank(); stRenderAll(); stRefreshList();
 </html>
 ```
 
-## File 7 of 27 — `%USERPROFILE%\local-ai-studio\studio_gui.pyw`
+## File 8 of 28 — `%USERPROFILE%\local-ai-studio\studio_gui.pyw`
 
 ```python
 #!/usr/bin/env python3
@@ -13239,7 +14681,7 @@ if __name__ == "__main__":
     main()
 ```
 
-## File 8 of 27 — `%USERPROFILE%\local-ai-studio\studioctl.ps1`
+## File 9 of 28 — `%USERPROFILE%\local-ai-studio\studioctl.ps1`
 
 ```powershell
 <#
@@ -13587,7 +15029,7 @@ switch ($Command) {
 exit $script:Failures
 ```
 
-## File 9 of 27 — `%USERPROFILE%\local-ai-studio\studio.cmd`
+## File 10 of 28 — `%USERPROFILE%\local-ai-studio\studio.cmd`
 
 ```bat
 @echo off
@@ -13603,7 +15045,7 @@ REM   studio monitor          live refreshing report
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0studioctl.ps1" %*
 ```
 
-## File 10 of 27 — `%USERPROFILE%\local-ai-studio\Studio Control Panel.cmd`
+## File 11 of 28 — `%USERPROFILE%\local-ai-studio\Studio Control Panel.cmd`
 
 ```bat
 @echo off
@@ -13635,7 +15077,7 @@ pause
 :done
 ```
 
-## File 11 of 27 — `%USERPROFILE%\local-ai-studio\Studio Control Panel.vbs`
+## File 12 of 28 — `%USERPROFILE%\local-ai-studio\Studio Control Panel.vbs`
 
 ```vbs
 ' Launch the Local AI Studio visual control panel (studio_gui.pyw) with NO console
@@ -13671,7 +15113,7 @@ MsgBox "Could not find a Python with tkinter installed." & vbCrLf & _
        "Tried the ComfyUI venvs and the conda envs.", 48, "Local AI Studio"
 ```
 
-## File 12 of 27 — `%USERPROFILE%\Documents\ComfyUI\custom_nodes\ram_websocket_save.py`
+## File 13 of 28 — `%USERPROFILE%\Documents\ComfyUI\custom_nodes\ram_websocket_save.py`
 
 ```python
 """RAM-only image output for the Local AI Studio.
@@ -13721,7 +15163,7 @@ NODE_CLASS_MAPPINGS = {"SaveImageWebsocket": SaveImageWebsocket}
 NODE_DISPLAY_NAME_MAPPINGS = {"SaveImageWebsocket": "Save Image (Websocket · RAM-only)"}
 ```
 
-## File 13 of 27 — `%USERPROFILE%\Documents\ComfyUI\custom_nodes\ace15_studio_encode.py`
+## File 14 of 28 — `%USERPROFILE%\Documents\ComfyUI\custom_nodes\ace15_studio_encode.py`
 
 ```python
 """AceStep15StudioEncode: TextEncodeAceStepAudio1.5 with optional musical metas.
@@ -13778,7 +15220,7 @@ NODE_CLASS_MAPPINGS = {"AceStep15StudioEncode": AceStep15StudioEncode}
 NODE_DISPLAY_NAME_MAPPINGS = {"AceStep15StudioEncode": "TextEncode ACE-Step 1.5 (studio, auto metas)"}
 ```
 
-## File 14 of 27 — `%USERPROFILE%\.claude\skills\local-llm\SKILL.md`
+## File 15 of 28 — `%USERPROFILE%\.claude\skills\local-llm\SKILL.md`
 
 ````markdown
 ---
@@ -13828,7 +15270,7 @@ The script prints only the model's text reply to stdout (errors to stderr, non-z
   if you want max coding quality later.
 ````
 
-## File 15 of 27 — `%USERPROFILE%\.claude\skills\local-llm\scripts\ask.py`
+## File 16 of 28 — `%USERPROFILE%\.claude\skills\local-llm\scripts\ask.py`
 
 ```python
 #!/usr/bin/env python3
@@ -13972,7 +15414,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-## File 16 of 27 — `%USERPROFILE%\.claude\skills\local-image\SKILL.md`
+## File 17 of 28 — `%USERPROFILE%\.claude\skills\local-image\SKILL.md`
 
 ````markdown
 ---
@@ -14039,7 +15481,7 @@ Reuse the bundled `image-gen` skill's `cutout.py` (rembg) for alpha cutout:
 - First generation loads ~11GB of weights; subsequent ones are fast. Free Ollama VRAM before generating.
 ````
 
-## File 17 of 27 — `%USERPROFILE%\.claude\skills\local-image\scripts\gen.py`
+## File 18 of 28 — `%USERPROFILE%\.claude\skills\local-image\scripts\gen.py`
 
 ```python
 #!/usr/bin/env python3
@@ -14393,7 +15835,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-## File 18 of 27 — `%USERPROFILE%\.claude\skills\local-music\scripts\musicgen.py`
+## File 19 of 28 — `%USERPROFILE%\.claude\skills\local-music\scripts\musicgen.py`
 
 ```python
 #!/usr/bin/env python3
@@ -14719,7 +16161,7 @@ if __name__ == "__main__":
     sys.exit(main())
 ```
 
-## File 19 of 27 — `%USERPROFILE%\.claude\skills\local-stt\SKILL.md`
+## File 20 of 28 — `%USERPROFILE%\.claude\skills\local-stt\SKILL.md`
 
 ````markdown
 ---
@@ -14752,7 +16194,7 @@ with ffmpeg if available (else convert first: `ffmpeg -i in.mp3 -ar 16000 -ac 1 
 - Requires the `nemo-asr` conda env (NVIDIA NeMo + CUDA torch). The transcript is the LAST stdout line.
 ````
 
-## File 20 of 27 — `%USERPROFILE%\.claude\skills\local-stt\scripts\transcribe.py`
+## File 21 of 28 — `%USERPROFILE%\.claude\skills\local-stt\scripts\transcribe.py`
 
 ```python
 #!/usr/bin/env python3
@@ -14883,7 +16325,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-## File 21 of 27 — `%USERPROFILE%\.claude\skills\local-tts\SKILL.md`
+## File 22 of 28 — `%USERPROFILE%\.claude\skills\local-tts\SKILL.md`
 
 ````markdown
 ---
@@ -14923,7 +16365,7 @@ Writes a wav to `--out` (default `tts_out.wav`) and prints its path to stdout.
   `pkg_resources`, which the Perth watermarker needs) and installed the cu124 torch build for GPU.
 ````
 
-## File 22 of 27 — `%USERPROFILE%\.claude\skills\local-tts\scripts\speak.py`
+## File 23 of 28 — `%USERPROFILE%\.claude\skills\local-tts\scripts\speak.py`
 
 ```python
 #!/usr/bin/env python3
@@ -15101,7 +16543,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-## File 23 of 27 — `%USERPROFILE%\.claude\skills\local-tts\scripts\voicechange.py`
+## File 24 of 28 — `%USERPROFILE%\.claude\skills\local-tts\scripts\voicechange.py`
 
 ```python
 #!/usr/bin/env python3
@@ -15198,7 +16640,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-## File 24 of 27 — `%USERPROFILE%\.claude\skills\local-voice\scripts\xtts_train.py`
+## File 25 of 28 — `%USERPROFILE%\.claude\skills\local-voice\scripts\xtts_train.py`
 
 ```python
 #!/usr/bin/env python3
@@ -15343,7 +16785,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-## File 25 of 27 — `%USERPROFILE%\.claude\skills\local-voice\scripts\xtts_infer.py`
+## File 26 of 28 — `%USERPROFILE%\.claude\skills\local-voice\scripts\xtts_infer.py`
 
 ```python
 #!/usr/bin/env python3
@@ -15447,7 +16889,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-## File 26 of 27 — `%USERPROFILE%\.claude\skills\local-voice\scripts\scripts.json`
+## File 27 of 28 — `%USERPROFILE%\.claude\skills\local-voice\scripts\scripts.json`
 
 ```json
 [
@@ -15494,7 +16936,7 @@ if __name__ == "__main__":
 ]
 ```
 
-## File 27 of 27 — `%USERPROFILE%\.claude\skills\local-tts\scripts\zonos_tts.py`
+## File 28 of 28 — `%USERPROFILE%\.claude\skills\local-tts\scripts\zonos_tts.py`
 
 ```python
 #!/usr/bin/env python3
