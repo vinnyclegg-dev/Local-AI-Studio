@@ -230,8 +230,13 @@ Two consequences that are easy to miss:
    prominently display **"MiniMax H3"** in its user interface. (Above $20M annual revenue you
    also need prior written authorisation from MiniMax.)
 
-**Status for this project:** authorisation has been applied for. Until it is granted, treat the
-Video tab as **local and personal only** — do not redistribute, publish or commercially use its
+   
+
+You can apply for authorisation if you do live in these regions.
+
+https://huggingface.co/MiniMaxAI/MiniMax-H3/discussions/12
+
+Until it is granted to you, treat the Video tab as **local and personal only** — do not redistribute, publish or commercially use its
 output. Every other tab in this studio is unaffected. The Video tab carries this same notice
 in-app so it cannot be missed. The **setup package now installs it** (`SETUP_FOR_CLAUDE.md`
 PHASE 5h), which is why that phase opens by putting this notice in front of the user and asking
