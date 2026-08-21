@@ -20,9 +20,9 @@ That's still the spirit of the project: give an AI (or yourself) a local set of 
 
 ## Demo
 
-A 75-second tour of every tab. The narration and background music were both produced by the studio's own tools — the video itself was edited separately.
+New Video Capability Demo
 
-[![Local AI Studio demo video](docs/video_preview.jpg)](https://youtu.be/KtkMroe_sT8)
+[![Local AI Studio demo video](docs/video_preview.jpg)](https://www.youtube.com/watch?v=fxvM9FZW8mE)
 
 ---
 
