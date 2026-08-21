@@ -22,7 +22,7 @@ That's still the spirit of the project: give an AI (or yourself) a local set of 
 
 New Video Capability Demo
 
-[![Local AI Studio demo video](docs/video_preview.jpg)](https://www.youtube.com/watch?v=fxvM9FZW8mE)
+[![Local AI Studio demo video](docs/screenshots/Local-AI-Studio-Thumbnail-Advert.jpg)](https://www.youtube.com/watch?v=fxvM9FZW8mE)
 
 ---
 
