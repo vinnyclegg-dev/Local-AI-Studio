@@ -20,9 +20,14 @@ That's still the spirit of the project: give an AI (or yourself) a local set of 
 
 ## Demo
 
-New Video Capability Demo
+**One prompt, and Claude Code builds the whole studio** — the clone, the runbook,
+29 source files, five conda environments, 91.7 GB of weights, and then what the
+finished studio actually makes.
 
-[![Local AI Studio demo video](docs/screenshots/Local-AI-Studio-Thumbnail-Advert.jpg)](https://www.youtube.com/watch?v=fxvM9FZW8mE)
+[![I gave Claude Code one prompt. It installed my entire AI studio](docs/screenshots/Local-AI-Studio-Thumbnail-Build.jpg)](https://youtu.be/IgKsEeU9ZvM)
+
+The second half of that film stands on its own as the
+[Video tab capability demo](https://www.youtube.com/watch?v=fxvM9FZW8mE).
 
 ---
 
