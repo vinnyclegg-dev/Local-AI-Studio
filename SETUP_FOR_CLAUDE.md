@@ -22,7 +22,7 @@ A local web app at **http://127.0.0.1:8800** with these tabs / features:
 | ✂️ Image — Edit | Reference-guided edit / remove / reframe / outpaint | ComfyUI |
 | 🕹️ Sprite Studio | One reference image → style-matched 2D game sprites: single actions (9 built-ins with hand-written pose scripts, or a custom motion) or a full animation set (idle/walk/run/jump/fall/crouch/attack/hurt/death). True transparent backgrounds (rembg), per-action strips + combined sheet with engine-ready JSON, per-frame ↻ re-roll with automatic backups; sets persist in `sprites\` | ComfyUI (FLUX.2 ReferenceLatent) + `spritekit.py` in the ComfyUI venv |
 | 🎬 Video | Text → video **with native stereo audio**, both produced by one sampler pass (**MiniMax H3**) — there is nothing to mux afterwards. Three input modes: **Text → video**; **First / last frame** (one keyframe = image→video, both = H3 interpolates between them); and **References**, taking up to **9 images, 3 video clips (each with its own optional soundtrack) and 3 audio clips**, addressed in the prompt as `<Picture 1>`, `<Video 1>`, `<Audio 1>`, to carry identity, motion, camera style or a cloned voice into the result. Up to 15 s at 24 fps. Renders at H3's **native 768 short edge** — below native the model composes a scene and then barely animates it (89/100 near-static frames at 480 vs 0/100 at 768, same prompt and seed), so the tab sizes by short edge, not megapixels. The ~21 GB int8 unets stream through 16 GB of VRAM via ComfyUI's per-module offload, with a **measured, self-correcting ETA** (load/sample/decode timings cached per geometry) rather than a spinner. ⚠️ **Territory-restricted licence — read the notice in PHASE 5h before generating or sharing anything.** | ComfyUI (native H3 nodes) + `h3gen.py` |
-| 🎼 Composer | A brief → a finished, arranged, mixed instrumental, as a 3-step wizard (**Set up → Arrange → Export**). The local LLM plans the *musical direction* (instruments + role, key, tempo, section structure, chord progression per section, mix and automation moves); `composerkit.py` writes the actual notes, because note-level output from a 20B local model isn't reliable enough to listen to. Instruments come from the bundled SoundFonts played by FluidSynth — free, already on disk, and the GM bank fits the 800 MB "plugin budget"; piano tracks are routed to the sampled Salamander Grand. Every track gets its own stem and channel strip: saturation, tone shelves, a time-varying lowpass, tempo-synced ping-pong delay and convolution reverb with **automated** send levels, plus volume/pan automation, risers, sub impacts, downlifters, drop silences and kick sidechaining. A **performance pass** (within-note CC11 swells, guitar strums/piano rolls, correlated timing drift with per-role feel, drum round-robin) is what stops it sounding like MIDI. Step 2 is a DAW-style editor: clip grid per track × section, channel strips, chord/energy/FX editing, and a **piano roll** for hand-editing notes — edits re-render in place with no LLM call. Optional ACE-Step re-texture pass ships *alongside* the clean master for A/B. Outputs master MP3/WAV, per-instrument FLAC stems, multitrack MIDI with pan/volume CCs, plus `score.json` and `arrangement.md` | Ollama (planning) + `composerkit.py` (FluidSynth + numpy/scipy, CPU) |
+| 🎼 Composer | A brief → a finished, arranged, mixed instrumental, as a 3-step wizard (**Set up → Arrange → Export**). Two engines: **Arrange** (the local LLM plans, `composerkit.py` writes every note) and **Orchestrate** (**SymphonyGen** — a 211M-parameter orchestral model writes 32 bars of multitrack score itself, no LLM involved, ~37s; see PHASE 9). In **Arrange**, the local LLM plans the *musical direction* (instruments + role, key, tempo, section structure, chord progression per section, mix and automation moves); `composerkit.py` writes the actual notes, because note-level output from a 20B local model isn't reliable enough to listen to. Instruments come from the bundled SoundFonts played by FluidSynth — free, already on disk, and the GM bank fits the 800 MB "plugin budget"; piano tracks are routed to the sampled Salamander Grand. Every track gets its own stem and channel strip: saturation, tone shelves, a time-varying lowpass, tempo-synced ping-pong delay and convolution reverb with **automated** send levels, plus volume/pan automation, risers, sub impacts, downlifters, drop silences and kick sidechaining. A **performance pass** (within-note CC11 swells, guitar strums/piano rolls, correlated timing drift with per-role feel, drum round-robin) is what stops it sounding like MIDI. Step 2 is a DAW-style editor: clip grid per track × section, channel strips, chord/energy/FX editing, and a **piano roll** for hand-editing notes — edits re-render in place with no LLM call. Optional ACE-Step re-texture pass ships *alongside* the clean master for A/B. Outputs master MP3/WAV, per-instrument FLAC stems, multitrack MIDI with pan/volume CCs, plus `score.json` and `arrangement.md` | Ollama (planning) + **SymphonyGen** (`symphgen.py`) + `composerkit.py` (FluidSynth + numpy/scipy, CPU) |
 | 🎵 Music Generation | Full songs & instrumentals from style tags + lyrics (**ACE-Step 1.5 XL**, hybrid planning-LM + DiT; **turbo default** for smooth vocals + speed, sft selectable for max prompt adherence). Structure/vocal/energy lyric-tag toolbar, BPM/Key/time-signature (Auto = model decides), planner creativity/guidance sliders, annotated sampler/scheduler picks, auto-retry on degenerate seeds, -1 dB peak limiting; remix mode | ComfyUI (git checkout) |
 | 🎹 Lullaby | Any song → a soft lullaby instrumental. A workbench splits the song into 6 stems (vocals/guitar/piano/other/bass/drums) with scrubbable previews so you choose what carries into the result, then one of three engines: **Remix** (default — drums dropped, dynamics flattened, then ACE-Step audio2audio re-imagines it with lullaby tags at a user-set denoise; closest to the original) · **Piano** (melody transcribed + key/chords detected, rebuilt as a rocking piano + music-box arrangement at 55–88bpm on a sampled grand) · **Melody Match** (traces each sung NOTE's actual continuous pitch curve via FCPE — no scale-snap/quantization, only real note boundaries — onto a portamento-capable instrument: cello/violin/flute/synth voice/music box; per-track **Route** selector lets some ticked stems go through Melody Match while others go through a full Piano-style rebuilt arrangement in the same render, mixed together; optional ACE-Step polish pass on the result) | `lullabykit` (2-pass Demucs + basic-pitch/FCPE + librosa + FluidSynth) + ACE-Step |
 | ✂️ Track Splitter | Any song → its 6 individual instrument tracks (vocals/guitar/piano/other/bass/drums), each with its own scrubbable player and download, a "download all" zip, and a persistent library of past splits — shares its separation cache with the Lullaby tab | `lullabykit` (Demucs) |
@@ -126,13 +126,13 @@ $dirs | ForEach-Object { New-Item -ItemType Directory -Force -Path $_ | Out-Null
 ```
 
 Now write each embedded file (use the Write tool; create parent folders if needed). The complete list is
-in *EMBEDDED SOURCE FILES* — 28 files in total.
+in *EMBEDDED SOURCE FILES* — 29 files in total.
 
 ---
 
 ## PHASE 3 — Create the conda environments
 
-Four conda envs back the audio / voice workers. Create each with the **exact** pins below (these match a
+Five conda envs back the audio / voice / score workers. Create each with the **exact** pins below (these match a
 known-good install). Run from an Anaconda Prompt or after `conda init powershell`.
 
 ```powershell
@@ -158,6 +158,13 @@ conda run -n nemo-asr pip install "nemo_toolkit[asr]==2.7.3"
 conda create -y -n kokoro python=3.11
 conda run -n kokoro pip install kokoro==0.9.4 soundfile
 conda run -n kokoro python -m spacy download en_core_web_sm
+
+# 5) SymphonyGen — the orchestral model behind Composer's Orchestrate engine (see PHASE 9)
+conda create -y -n symphgen python=3.11
+conda run -n symphgen pip install torch==2.8.0+cu128 torchaudio==2.8.0+cu128 --index-url https://download.pytorch.org/whl/cu128
+conda run -n symphgen pip install "transformers==5.1.0" miditoolkit==1.0.1 mido==1.3.3 numpy tqdm
+#   ^ deliberately NOT lullabykit's venv: the model needs torch, composerkit renders without it,
+#     and symphgen.py never imports composerkit — the two halves run as separate processes.
 ```
 
 > Each env is deliberately separate — their torch / transformers / setuptools requirements conflict and
@@ -409,14 +416,22 @@ curl.exe -L -o "$M\vae\ace_1.5_vae.safetensors" "$repo/vae/ace_1.5_vae.safetenso
 >
 > MiniMax H3 ships under the **MiniMax H3 Community License Agreement**, whose "Applicable
 > Territory" is *worldwide **excluding** the European Union, the United Kingdom, the United States
-> and the Republic of Korea*. Two consequences are easy to miss:
+> and the Republic of Korea*. Two things are easy to miss:
 >
-> 1. **The restriction follows the output.** The licence covers use, reproduction, modification,
->    distribution and display of the models *"or any of their Outputs or results"*. A video generated
->    here is an Output — so being outside the Applicable Territory is not just about the weights.
-> 2. **Commercial use requires on-screen attribution.** Any commercial product must prominently
->    display **"MiniMax H3"** in its UI. Above $20M annual revenue you also need prior written
->    authorisation from MiniMax.
+> 1. **The licence text reaches outputs, but MiniMax read it narrowly.** §V.4 covers use,
+>    reproduction, modification, distribution and display of the models *"or any of their Outputs or
+>    results"*. In their official licence Q&A, however, MiniMax told creators in non-excluded
+>    territories that globally distributed content needs no further authorisation — putting the
+>    practical restriction on **local deployment of the weights**.
+> 2. **The one binding obligation is AI disclosure, not branding.** AUP item 12 requires you to
+>    clearly disclose that the content is AI-generated. MiniMax have stated that embedded
+>    **"MiniMax H3"** branding is *not* required and a credit in the title or description is enough.
+>    Above $20M annual revenue, commercial use does need prior written authorisation from MiniMax.
+>
+> If the user is in an Excluded Territory they can apply for individual authorisation at
+> **https://platform.minimax.io/h3-license** — individuals may enter `Personal/None` for company
+> name. (The maintainer of this project holds such an authorisation; it is personal and does **not**
+> transfer to anyone installing from this runbook.)
 >
 > Every other tab in this studio is unaffected by this. **Ask the user whether to install the Video
 > tab's models before spending the ~63 GB**, and make sure they have seen the two points above. The
@@ -1160,6 +1175,66 @@ Notes:
 
 ---
 
+## PHASE 9 — SymphonyGen (Composer's Orchestrate engine)
+
+The Composer tab has two engines. **Arrange** needs nothing beyond PHASE 8. **Orchestrate**
+drops the language model entirely and hands composition to **SymphonyGen** (MIT, ISMIR 2026) —
+a 211M-parameter orchestral model that writes 32 bars of multitrack score itself in ~37s.
+`symphgen.py` (embedded below) is the bridge: it runs the model, then converts the MIDI into a
+composerkit score, so the existing mixer, DAW grid, piano roll, stem export and master chain
+render it without any of them being touched.
+
+```powershell
+$SG = "$HOME\local-ai-studio\symphonygen"
+
+# 1) Model code (MIT). The checkpoints are NOT in the repo — cloning alone is not enough.
+git clone https://github.com/symphonygen/symphonygen.git $SG
+
+# 2) The four released checkpoints (~1.75 GB) into asset\
+New-Item -ItemType Directory -Force "$SG\asset" | Out-Null
+$hf = "https://huggingface.co/SymphonyGen/SymphonyGen/resolve/main"
+curl.exe -L -o "$SG\asset\grpo_clamp+track_epoch_6.pt" "$hf/grpo_clamp+track_epoch_6.pt"
+curl.exe -L -o "$SG\asset\grpo_clamp_epoch_10.pt"      "$hf/grpo_clamp_epoch_10.pt"
+curl.exe -L -o "$SG\asset\stage_two_pretrained.pt"     "$hf/stage_two_pretrained.pt"
+curl.exe -L -o "$SG\asset\stage_one_pretrained.pt"     "$hf/stage_one_pretrained.pt"
+```
+
+**All four are required, not just the default.** The Composer tab exposes all three variants and
+`symphgen.py` maps them onto separate files:
+
+| UI variant | checkpoint | notes |
+|---|---|---|
+| `reinforced+track` | `grpo_clamp+track_epoch_6.pt` | **default** — the variant the authors pair with `--register_decay 1`; denser, fuller scoring |
+| `reinforced` | `grpo_clamp_epoch_10.pt` | pure CLaMP3-reward GRPO |
+| `pretrained` | `stage_two_pretrained.pt` | no RL |
+| *(always)* | `stage_one_pretrained.pt` | the harmony-skeleton model **every** variant conditions on |
+
+Two traps worth stating plainly:
+
+- The upstream README also lists CLaMP 3 weights (`weights_clamp3.pth`). That is the **RL reward
+  model and is training-only** — generation never loads it. Do not download it.
+- SymphonyGen writes a scratch "Reference Outline" track (~1300 notes) and emits every note at
+  velocity 100. `symphgen.py` drops the outline and re-shapes velocity; that is why the output
+  does not sound like raw machine MIDI. Nothing to configure — just don't bypass the bridge.
+
+**Verify:**
+
+```powershell
+& "$HOME\.conda\envs\symphgen\python.exe" -c "import torch; print('torch', torch.__version__, '| cuda', torch.cuda.is_available())"
+Get-ChildItem "$HOME\local-ai-studio\symphonygen\asset\*.pt" | Select-Object Name, @{n='MB';e={[math]::Round($_.Length/1MB)}}
+```
+
+Expect torch `2.8.0+cu128`, `cuda True`, and four `.pt` files (474 / 474 / 474 / 331 MB). Then in
+the UI: **Composer → Set up → engine "Orchestrate" → Arrange**. A 32-bar multitrack score should
+land in the clip grid in ~37s with no Ollama call. If it fails with *"the symphgen conda env is
+missing"*, env #5 in PHASE 3 was not created.
+
+> The Composer tab still **appears** without any of this — `installed_components()` gates it on
+> `isdir(SYMPHONYGEN_DIR) or isfile(SYMPHGEN_PY) or has_llm`, so an LLM alone is enough to show
+> the tab and run Arrange. Orchestrate is the half that fails, and only when clicked.
+
+---
+
 ## Appendix A — Required vs. NOT-used models
 
 **REQUIRED (install these):**
@@ -1186,10 +1261,15 @@ Notes:
 - `lullabykit`: its own venv (torch cu129 + `demucs` + `basic-pitch[onnx]` + `pretty_midi`/`mido`/
   `soundfile`), a portable FluidSynth build, the FluidR3 GM soundfont, and the Salamander Grand Piano
   soundfont (falls back to FluidR3's GM piano if missing) — Lullaby and Track Splitter tabs, see PHASE 8.
-- Composer needs **nothing beyond PHASE 8**: `composerkit.py` runs under `lullabykit`'s existing venv
-  (numpy + soundfile, both already there) and plays the same bundled FluidR3 GM soundfont via the same
-  FluidSynth build — no separate install step. The LLM planning half reuses the Language tab's Ollama
-  model; the render half is CPU-only.
+- Composer / **Arrange** needs nothing beyond PHASE 8: `composerkit.py` runs under `lullabykit`'s
+  existing venv (numpy + soundfile, both already there) and plays the same bundled FluidR3 GM soundfont
+  via the same FluidSynth build — no separate install step. The LLM planning half reuses the Language
+  tab's Ollama model; the render half is CPU-only.
+- Composer / **Orchestrate** needs **SymphonyGen** — the `symphonygen` checkout, its four released
+  checkpoints (`grpo_clamp+track_epoch_6.pt` [default] + `grpo_clamp_epoch_10.pt` +
+  `stage_two_pretrained.pt` + `stage_one_pretrained.pt`, ~1.75 GB) and the `symphgen` conda env from
+  PHASE 3 — see PHASE 9. The checkpoints are **not** in the git repo, so a clone on its own leaves the
+  engine broken. CLaMP 3 (`weights_clamp3.pth`) is training-only and is **not** needed.
 
 **NOT used by the studio — do NOT install (these are leftovers from unrelated experiments):**
 - `qwen3.5:9b` (appears in the studio's stop-list but is never mapped to a task).
@@ -1231,9 +1311,9 @@ Notes:
 # EMBEDDED SOURCE FILES
 
 Below is the complete source of every program in the stack. For each, **create the file at the exact path
-in its heading** and paste its contents verbatim (strip nothing). There are 28 files.
+in its heading** and paste its contents verbatim (strip nothing). There are 29 files.
 
-## File 1 of 28 — `%USERPROFILE%\local-ai-studio\server.py`
+## File 1 of 29 — `%USERPROFILE%\local-ai-studio\server.py`
 
 ```python
 #!/usr/bin/env python3
@@ -1383,6 +1463,17 @@ COMPOSERKIT = os.path.join(HERE, "composerkit.py")
 COMPOSITIONS = os.path.join(HERE, "compositions")
 os.makedirs(COMPOSITIONS, exist_ok=True)
 
+# ---- Orchestrate engine (SymphonyGen writes the notes) ------------------------
+# SymphonyGen (MIT, ISMIR 2026) is a real orchestral model rather than a template:
+# a 211M-parameter cascading decoder that emits 32 bars of multitrack MIDI. It
+# needs torch, so it lives in its own `symphgen` conda env; symphgen.py converts
+# its MIDI into a composerkit score whose tracks carry `notes_override`, and the
+# ordinary render path then mixes and exports it unchanged. Generation is GPU
+# work, so unlike the template path it has to take the Manager lock.
+SYMPHGEN = os.path.join(HERE, "symphgen.py")
+SYMPHGEN_PY = os.path.join(ENVS, "symphgen", "python.exe")
+SYMPHONYGEN_DIR = os.path.join(HERE, "symphonygen")
+
 # ---- Sprite Studio (2D game sprites from one reference image) -----------------
 # Every frame is a FLUX.2 Klein reference-edit (gen.py --image): the uploaded art is
 # chained through ReferenceLatent, which is what keeps character/style consistent
@@ -1399,9 +1490,12 @@ SPRITEKIT = os.path.join(HERE, "spritekit.py")
 # per-module offload. Counter-intuitively they beat the 15.6GB Q3_K_M GGUF on BOTH
 # quality and speed (573s vs 779s at 1344x768/20 steps) — see h3gen.py's header.
 # LICENCE: the MiniMax H3 Community Licence excludes the UK, EU, US and South
-# Korea, and the restriction covers generated outputs, not just the weights. It
-# also requires "MiniMax H3" be shown in the UI of any commercial product. The
-# Video tab surfaces both; see README.md before redistributing anything made here.
+# Korea from local deployment of the weights. The licence text (SV.4) also reaches
+# "Outputs", but MiniMax read it narrowly in their official Q&A. The one binding
+# obligation on shared output is AUP item 12 - disclose that it is AI-generated;
+# on-screen "MiniMax H3" branding is NOT required. This machine holds individual
+# authorisation from MiniMax (personal, does not transfer with copies of the
+# studio). The Video tab surfaces this; see README.md before redistributing.
 VIDEOS = os.path.join(HERE, "videos")
 os.makedirs(VIDEOS, exist_ok=True)
 H3GEN = os.path.join(HERE, "h3gen.py")
@@ -1471,6 +1565,71 @@ def _run(cmd: list, timeout: int = 600):
         err = (err or "") + f"\n[timed out after {timeout}s — process tree killed]"
         return 1, (out or "").strip(), err.strip()
     return p.returncode, (out or "").strip(), (err or "").strip()
+
+
+_COMPONENTS_CACHE = {"t": 0.0, "data": None}
+
+
+def installed_components():
+    """Which tabs actually have their models/runtimes on disk.
+
+    The UI hides a tab whose backend was never installed, rather than offering a
+    button that can only fail. Deliberately probed from disk on every (cached) call
+    instead of read from Studio Setup's state file: models can be added by re-running
+    Setup, or deleted by hand, and the sidebar should follow reality either way.
+
+    Each entry is one cheap existence check - no subprocesses, no model loading - so
+    this stays fast enough for the UI to call on load.
+    """
+    if time.time() - _COMPONENTS_CACHE["t"] < 15 and _COMPONENTS_CACHE["data"]:
+        return _COMPONENTS_CACHE["data"]
+
+    comfy_models = os.path.join(os.path.dirname(COMFY_INPUT), "models")
+
+    def model(*parts):
+        return os.path.isfile(os.path.join(comfy_models, *parts))
+
+    def env(name):
+        return os.path.isfile(os.path.join(ENVS, name, "python.exe"))
+
+    flux  = model("diffusion_models", "flux-2-klein-base-4b-fp8.safetensors")
+    ace   = model("diffusion_models", "acestep_v1.5_xl_turbo_bf16.safetensors")
+    h3    = model("diffusion_models", "minimax_h3_fl2va_pruned_int8_convrot.safetensors")
+    lulla = os.path.isfile(LULLABY_PY)
+    tts   = env("kokoro") or env("chatterbox")
+
+    # An Ollama install with nothing pulled is not a working Language tab, so look
+    # for a downloaded manifest rather than for ollama.exe. The prerequisite is
+    # installed by the bundle long before any model is chosen, and gating on the
+    # binary would leave three tabs visible that can only fail.
+    ollama_models = os.environ.get("OLLAMA_MODELS") or os.path.join(HOME, ".ollama", "models")
+    has_llm = False
+    manifests = os.path.join(ollama_models, "manifests")
+    for root, _dirs, files in os.walk(manifests):
+        if files:
+            has_llm = True
+            break
+
+    data = {
+        "home":        True,
+        "lang":        has_llm,
+        "story":       os.path.isfile(KOBOLD_MODEL) or has_llm,
+        "gen":         flux,
+        "edit":        flux,
+        "sprite":      flux,
+        "video":       h3,
+        "music":       ace,
+        # Orchestrate needs SymphonyGen; Arrange needs an LLM to plan. Either is enough.
+        "composer":    os.path.isdir(SYMPHONYGEN_DIR) or os.path.isfile(SYMPHGEN_PY) or has_llm,
+        "lullaby":     lulla,
+        "split":       lulla,
+        "stt":         env("nemo-asr"),
+        "tts":         tts,
+        "voicestudio": env("xtts"),
+        "audiobook":   tts,
+    }
+    _COMPONENTS_CACHE.update(t=time.time(), data=data)
+    return data
 
 
 _GPU_CACHE = {"t": 0.0, "data": {"used": 0, "total": 0, "util": 0}}
@@ -4620,6 +4779,9 @@ class ComposerJob:
             if d.get("_score"):
                 self._render(d["_score"], d)
                 return
+            if (d.get("engine") or "").lower() == "orchestrate":
+                self._orchestrate(d)
+                return
             lib = composer_library()
             seconds = max(30, min(420, int(d.get("seconds") or 150)))
             genre = (d.get("genre") or "synth-pop").strip()
@@ -4668,6 +4830,67 @@ class ComposerJob:
                 os.remove(os.path.join(COMPOSITIONS, self.name, "progress.json"))
             except Exception:
                 pass
+
+    def _orchestrate(self, d: dict):
+        """SymphonyGen writes the score, composerkit renders it.
+
+        No LLM is involved: the model reads a harmony skeleton (invented here, or
+        analysed out of a MIDI the user supplied) and scores it directly. Only the
+        generation needs the GPU, so the Manager lock is released before handing
+        over to the render — which is CPU-only and can take minutes with stems."""
+        if not os.path.isfile(SYMPHGEN_PY):
+            raise RuntimeError("the symphgen conda env is missing — the "
+                               "Orchestrate engine needs it (see setup)")
+        outdir = os.path.join(COMPOSITIONS, self.name)
+        os.makedirs(outdir, exist_ok=True)
+        work = os.path.join(outdir, "_symphonygen")
+
+        cmd = [SYMPHGEN_PY, SYMPHGEN, "generate", "--out", work,
+               "--variant", (d.get("variant") or "reinforced+track"),
+               "--title", (d.get("title") or "").strip() or
+                          _safe_name(self.name).replace("_", " ").title(),
+               "--bpm", str(max(50, min(200, int(d.get("bpm") or 96)))),
+               "--key", (d.get("key") or "auto").strip() or "auto",
+               "--brief", (d.get("brief") or "").strip()[:400]]
+        if int(d.get("seed", -1)) >= 0:
+            cmd += ["--seed", str(int(d["seed"]))]
+        if d.get("forbid_piano"):
+            cmd.append("--forbid-piano")
+        # a MIDI to re-orchestrate: the model analyses its harmony and rescores it
+        cond = (d.get("cond_midi") or "").strip()
+        if cond:
+            safe = os.path.normpath(os.path.join(COMPOSITIONS, cond))
+            if not safe.startswith(os.path.normpath(COMPOSITIONS) + os.sep) \
+                    or not os.path.isfile(safe):
+                raise RuntimeError("that MIDI is not in the compositions folder")
+            cmd += ["--cond-midi", safe]
+
+        self.current = ("re-orchestrating your MIDI" if cond
+                        else "SymphonyGen is scoring 32 bars")
+        env = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
+        with MGR.lock:
+            MGR.stop()          # 1.8GB of checkpoints, but the GPU is shared
+            self._proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                                          stderr=subprocess.PIPE, text=True,
+                                          encoding="utf-8", errors="replace",
+                                          env=env, cwd=HERE, **NOWIN)
+            out, err = self._proc.communicate(timeout=1200)
+            rc = self._proc.returncode
+            self._proc = None
+        if self.stop_flag:
+            raise RuntimeError("cancelled")
+        line = (out or "").strip().splitlines()[-1] if (out or "").strip() else ""
+        if rc != 0 or not line.startswith("{"):
+            raise RuntimeError((err or out or "orchestration failed").strip()[-400:])
+        info = json.loads(line)
+
+        with open(info["score"], encoding="utf-8") as f:
+            score = json.load(f)
+        self.message = (f"SymphonyGen · {info['tracks']} desks · "
+                        f"{info['notes']} notes")
+        self.step = 1
+        self.current = "rendering the orchestra"
+        self._render(score, d)
 
     def _render(self, plan: dict, d: dict):
         """Hand a plan to composerkit and collect the result. Shared by the
@@ -4951,6 +5174,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, json.dumps({"unlocked_model": OLLAMA_UNLOCKED,
                                         "standard_model": "gpt-oss:20b",
                                         "vision_model": "qwen3-vl:8b"}))
+        elif self.path == "/api/components":
+            self._send(200, json.dumps(installed_components()),
+                       extra={"Cache-Control": "no-store"})
         elif self.path == "/api/voices":
             self._send(200, json.dumps({"voices": list_voices()}))
         elif self.path == "/api/voice_train_status":
@@ -5125,7 +5351,7 @@ if __name__ == "__main__":
     ThreadingHTTPServer((host, port), Handler).serve_forever()
 ```
 
-## File 2 of 28 — `%USERPROFILE%\local-ai-studio\spritekit.py`
+## File 2 of 29 — `%USERPROFILE%\local-ai-studio\spritekit.py`
 
 ```python
 #!/usr/bin/env python3
@@ -5287,7 +5513,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-## File 3 of 28 — `%USERPROFILE%\local-ai-studio\h3gen.py`
+## File 3 of 29 — `%USERPROFILE%\local-ai-studio\h3gen.py`
 
 ```python
 #!/usr/bin/env python
@@ -5864,7 +6090,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-## File 4 of 28 — `%USERPROFILE%\local-ai-studio\composerkit.py`
+## File 4 of 29 — `%USERPROFILE%\local-ai-studio\composerkit.py`
 
 ```python
 #!/usr/bin/env python3
@@ -8127,7 +8353,559 @@ if __name__ == "__main__":
     sys.exit(main())
 ```
 
-## File 5 of 28 — `%USERPROFILE%\local-ai-studio\sf3convert.py`
+## File 5 of 29 — `%USERPROFILE%\local-ai-studio\symphgen.py`
+
+```python
+#!/usr/bin/env python
+"""SymphonyGen -> Composer bridge.
+
+SymphonyGen (MIT, ISMIR 2026) writes the notes; composerkit.py still does the
+rendering, mixing and export. The join is composerkit's `notes_override`: a track
+carrying one replays its notes verbatim instead of being re-composed, so an
+orchestration arrives in the existing DAW grid, piano roll, stem export and
+master chain without any of that being touched.
+
+Two stages, deliberately separate processes:
+
+    generate   runs in the `symphgen` conda env (needs torch) and produces
+               a 32-bar multitrack MIDI
+    score      converts that MIDI into a composerkit score dict (plan.json)
+
+server.py runs `generate` then hands the score to the existing composerkit
+render path, which is why nothing here imports composerkit — the renderer lives
+in lullabykit's venv and the model lives in this one.
+
+Three things about SymphonyGen's MIDI output shape the conversion:
+
+  * it writes a "Reference Outline" track — the harmony skeleton it was
+    conditioned on. It is a scratch track, not part of the orchestration, and at
+    ~1300 notes it would drown the mix. It gets dropped.
+  * every note is velocity 100. Flat velocity is the single loudest tell of
+    machine MIDI, so `_shape_velocity` puts dynamics back (see there).
+  * it emits one MIDI track per orchestral desk — up to 27, with divisi doubled
+    across neighbouring tracks. composerkit hard-caps a score at 10 instruments
+    (`src[:10]` in normalize_score), so desks are merged into families.
+"""
+
+import argparse
+import json
+import math
+import os
+import re
+import subprocess
+import sys
+import zlib
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+SYMPHONYGEN = HERE / "symphonygen"
+ASSET = SYMPHONYGEN / "asset"
+
+# The GRPO + track-density checkpoint is the default because it is the variant
+# the authors pair with --register_decay 1, and it writes denser, fuller scoring
+# than the pure-CLaMP3 one — which is what "cinematic" wants.
+DEFAULT_MODEL = "grpo_clamp+track_epoch_6.pt"
+MODELS = {
+    "reinforced+track": ("grpo_clamp+track_epoch_6.pt", 1),
+    "reinforced": ("grpo_clamp_epoch_10.pt", 0),
+    "pretrained": ("stage_two_pretrained.pt", 1),
+}
+
+HARMO_CKPT = "stage_one_pretrained.pt"
+
+# SymphonyGen always writes exactly BAR_NUM=32 bars at 4/4, ticks_per_beat=480.
+BAR_NUM = 32
+OUTLINE_NAMES = {"Reference Outline", "Harmonic Outline"}
+
+
+# ---------------------------------------------------------------- orchestration
+#
+# GM program -> (family, role, pan, reverb, level_scale). Pan follows a real
+# concert seating plan from the audience's side, because that is what makes an
+# orchestral mix read as an ensemble in a room rather than a stack of patches:
+# firsts left, cellos and basses right, brass behind, timpani centre-back.
+#
+# `role` is composerkit's vocabulary, not an orchestral one. It survives here
+# because the notes are overridden anyway — role only still decides the default
+# mix level, whether the track gets a CC11 expression curve (sustained roles do),
+# and which parts get dropped first if the track budget is tight. Mapping a
+# section to the role whose *behaviour* suits it beats inventing new roles.
+FAMILIES = {
+    "violins":  {"role": "lead",    "pan": -0.42, "reverb": 0.72, "level": 0.90, "order": 1},
+    "violas":   {"role": "counter", "pan": -0.12, "reverb": 0.72, "level": 0.62, "order": 2},
+    "celli":    {"role": "bass",    "pan":  0.28, "reverb": 0.66, "level": 0.85, "order": 3},
+    "woodwind": {"role": "counter", "pan": -0.05, "reverb": 0.62, "level": 0.70, "order": 4},
+    "horns":    {"role": "pad",     "pan": -0.30, "reverb": 0.78, "level": 0.78, "order": 5},
+    "brass":    {"role": "chords",  "pan":  0.34, "reverb": 0.70, "level": 0.80, "order": 6},
+    "keys":     {"role": "arp",     "pan":  0.18, "reverb": 0.58, "level": 0.62, "order": 7},
+    "timpani":  {"role": "perc",    "pan":  0.00, "reverb": 0.80, "level": 0.85, "order": 8},
+}
+
+FAMILY_LABEL = {
+    "violins": "violins", "violas": "violas", "celli": "celli & basses",
+    "woodwind": "woodwinds", "horns": "horns", "brass": "brass",
+    "keys": "harp & keys", "timpani": "timpani",
+}
+
+
+# Patches SymphonyGen uses for the string choir. These carry no information about
+# WHICH desk is playing, so they are ranked by register instead (see midi_to_score).
+_STRING_PROGRAMS = {40, 41, 42, 43, 44, 45, 48, 49, 50, 51}
+
+
+def _is_string(program: int) -> bool:
+    return program in _STRING_PROGRAMS
+
+
+def _family_for(program: int, mid_pitch: int) -> str:
+    """Which desk a MIDI track belongs to.
+
+    Programs 48/49 ("String Ensemble") are the ambiguous case and by far the most
+    common thing SymphonyGen emits: the same patch is used for the whole string
+    choir, so the only signal for which desk it is is the register it plays in.
+
+    That register is the part's MEDIAN pitch, not its lowest. SymphonyGen often
+    writes a desk that touches a low pedal note but otherwise sits high, and
+    classifying on the minimum dropped whole violin parts into the cellos.
+    """
+    p = program
+    if p in (48, 49, 50, 51, 44, 45):
+        if mid_pitch >= 62:
+            return "violins"
+        if mid_pitch >= 50:
+            return "violas"
+        return "celli"
+    if p in (40, 41):                      # violin, viola patches
+        return "violins" if p == 40 else "violas"
+    if p in (42, 43):                      # cello, contrabass
+        return "celli"
+    if 56 <= p <= 59 or p == 63:           # trumpet, trombone, tuba, muted
+        return "brass"
+    if 60 <= p <= 62:                      # french horn / brass section
+        return "horns"
+    if 64 <= p <= 79:                      # reeds and flutes
+        return "woodwind"
+    if p == 47 or 112 <= p <= 119:         # timpani and struck percussion
+        return "timpani"
+    if 32 <= p <= 39:                      # bass guitars — the bass desk's job
+        return "celli"
+    if p == 46 or p <= 15 or 16 <= p <= 31 or 80 <= p <= 103:
+        return "keys"                      # harp, piano, organ, guitar, synth
+    # Anything left (ethnic, sound effects) is placed by register rather than by
+    # a guess at its family, so it at least sits in the right part of the mix.
+    return "woodwind" if mid_pitch >= 58 else "celli"
+
+
+# The patch a desk is rendered with, when the one SymphonyGen chose is not an
+# orchestral instrument for that desk. FluidSynth plays the program literally, so
+# a stray "Electric Bass (pick)" on the cello desk is an audible fault, not just a
+# mislabelled row in the arrangement table. Note this is deliberately stricter
+# than _family_for: a bass guitar is *placed* with the celli because that is the
+# register it occupies, and then *voiced* as a cello.
+ORCHESTRAL_PATCHES = {
+    "violins": {40, 44, 45, 48, 49, 50, 51},
+    "violas": {41, 44, 45, 48, 49, 50, 51},
+    "celli": {42, 43, 44, 45, 48, 49, 50, 51},
+    "woodwind": set(range(64, 80)),
+    "horns": {60, 61, 62},
+    "brass": {56, 57, 58, 59, 63},
+    "keys": set(range(0, 16)) | {46},
+    "timpani": {47} | set(range(112, 120)),
+}
+
+CANON_PROGRAM = {
+    "violins": 48, "violas": 49, "celli": 42, "woodwind": 73,
+    "horns": 60, "brass": 56, "keys": 46, "timpani": 47,
+}
+
+
+# ------------------------------------------------------------------- generation
+
+def _env() -> dict:
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(SYMPHONYGEN)
+    env["ASSET_DIR"] = str(ASSET)
+    env["WORK_DIR"] = str(SYMPHONYGEN / "data")
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
+    return env
+
+
+def _run(cmd: list, cwd: Path) -> None:
+    proc = subprocess.run(cmd, cwd=str(cwd), env=_env(), text=True,
+                          encoding="utf-8", errors="replace",
+                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    if proc.returncode != 0:
+        tail = (proc.stdout or "").strip()[-1500:]
+        raise RuntimeError(f"symphonygen failed:\n{tail}")
+
+
+def generate(out_dir: Path, variant: str = "reinforced+track",
+             cond_midi: str = "", forbid_piano: bool = False,
+             seed: int = -1) -> Path:
+    """Produce one 32-bar orchestration and return its MIDI path.
+
+    With no `cond_midi` the harmony model invents a skeleton first; with one, the
+    skeleton is analysed out of that MIDI instead (--analyze_harmo), which is the
+    re-orchestration path — hand it a chord sketch and it scores it.
+    """
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    ckpt, register_decay = MODELS.get(variant, (DEFAULT_MODEL, 1))
+    model = ASSET / ckpt
+    if not model.is_file():
+        raise RuntimeError(f"checkpoint missing: {model}")
+
+    py = sys.executable
+    if cond_midi:
+        cond = Path(cond_midi)
+        if not cond.is_file():
+            raise RuntimeError(f"conditioning MIDI not found: {cond}")
+        analyze = True
+    else:
+        harmo_dir = out_dir / "harmony"
+        _run([py, str(SYMPHONYGEN / "arch" / "harmo" / "generator.py"),
+              str(ASSET / HARMO_CKPT), "--batch_size", "1",
+              "--save_dir", str(harmo_dir)], SYMPHONYGEN)
+        mids = sorted(harmo_dir.glob("*.mid"))
+        if not mids:
+            raise RuntimeError("harmony model produced no skeleton")
+        cond = mids[0]
+        analyze = False
+
+    symph_dir = out_dir / "symph"
+    cmd = [py, str(SYMPHONYGEN / "arch" / "symph" / "generator.py"),
+           str(model), str(cond),
+           "--group_size", "1",
+           "--register_decay", str(register_decay),
+           "--save_dir", str(symph_dir)]
+    if analyze:
+        cmd.append("--analyze_harmo")
+    if forbid_piano:
+        cmd.append("--forbid_piano")
+    _run(cmd, SYMPHONYGEN)
+
+    mids = sorted(symph_dir.rglob("*.mid"))
+    if not mids:
+        raise RuntimeError("orchestration produced no MIDI")
+    final = out_dir / "symphony.mid"
+    final.write_bytes(mids[0].read_bytes())
+    return final
+
+
+# ------------------------------------------------------------------- conversion
+
+PC_NAME = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+
+# Krumhansl-Kessler profiles: how strongly each scale degree characterises a key.
+_MAJOR_PROFILE = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88]
+_MINOR_PROFILE = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17]
+
+# Roman-numeral progressions used to label the sections once the key is known.
+_PROG = {
+    "major": ["I", "V", "vi", "IV"],
+    "minor": ["i", "VI", "III", "VII"],
+}
+
+
+def _detect_key(notes) -> str:
+    """Best-fit key for the generated music, weighted by sounding duration.
+
+    composerkit re-derives the key from the chord symbols and overrides the
+    declared one when they disagree, so guessing here and leaving the chords on a
+    template progression made the UI show a key the music was not in. Detecting
+    from the notes and then labelling the sections from the same key keeps the
+    two consistent.
+    """
+    weight = [0.0] * 12
+    for n in notes:
+        weight[n.pitch % 12] += max(1, n.end - n.start)
+    if not any(weight):
+        return "C minor"
+
+    mean = sum(weight) / 12.0
+    dev = [w - mean for w in weight]
+
+    def corr(profile, tonic):
+        pm = sum(profile) / 12.0
+        pdev = [profile[(i - tonic) % 12] - pm for i in range(12)]
+        num = sum(d * p for d, p in zip(dev, pdev))
+        den = math.sqrt(sum(d * d for d in dev) * sum(p * p for p in pdev)) or 1e-9
+        return num / den
+
+    best = max(
+        [(corr(_MAJOR_PROFILE, t), t, "major") for t in range(12)] +
+        [(corr(_MINOR_PROFILE, t), t, "minor") for t in range(12)]
+    )
+    return f"{PC_NAME[best[1]]} {best[2]}"
+
+
+def _shape_velocity(beat: float, pitch: int, role: str, tsig: int,
+                    total_beats: float, rng) -> int:
+    """Put dynamics back into a part that arrives at a flat velocity 100.
+
+    Four things, in order of how much they matter:
+      * metric accent — beat 1 carries the bar, beat 3 leans on it lightly
+      * a phrase arc across the whole piece, so it swells and settles instead of
+        sitting at one dynamic for 32 bars
+      * register tilt — a melody gains presence as it climbs, an inner pad loses
+        it, which is roughly what players actually do
+      * a small deterministic jitter, seeded, so repeated renders are identical
+        but no two notes are mechanically equal
+    """
+    base = {"lead": 92, "counter": 78, "bass": 86, "pad": 68,
+            "chords": 78, "arp": 72, "perc": 90, "drums": 90}.get(role, 80)
+
+    pos = beat % tsig
+    if pos < 0.08:
+        base += 9
+    elif tsig == 4 and abs(pos - 2.0) < 0.08:
+        base += 4
+    elif abs(pos - round(pos)) > 0.12:      # off the beat: lighter
+        base -= 4
+
+    if total_beats > 0:
+        # one slow swell over the piece — peak around two-thirds through, which
+        # is where an orchestral cue usually puts its climax
+        arc = math.sin(math.pi * min(1.0, beat / total_beats) ** 0.85)
+        base += int(round(10 * arc)) - 3
+
+    if role in ("lead", "counter"):
+        base += int(round((pitch - 67) * 0.32))
+    elif role in ("pad", "chords"):
+        base -= int(round(max(0, pitch - 67) * 0.22))
+
+    base += rng.randint(-3, 3)
+    return max(28, min(120, base))
+
+
+def midi_to_score(midi_path: Path, title: str = "Orchestration",
+                  bpm: int = 96, key: str = "auto", genre: str = "cinematic",
+                  seed: int = 1234, brief: str = "") -> dict:
+    """SymphonyGen MIDI -> a composerkit score with every part pre-written."""
+    import random
+
+    import miditoolkit
+
+    m = miditoolkit.MidiFile(str(midi_path))
+    tpb = m.ticks_per_beat or 480
+    tsig = 4
+    if m.time_signature_changes:
+        num = m.time_signature_changes[0].numerator
+        # composerkit clamps the signature to 3 or 4; anything else renders as 4
+        tsig = num if num in (3, 4) else 4
+
+    desks = []
+    for inst in m.instruments:
+        if inst.name in OUTLINE_NAMES or not inst.notes:
+            continue
+        pitches = sorted(n.pitch for n in inst.notes)
+        desks.append({
+            "program": inst.program,
+            "is_drum": bool(inst.is_drum),
+            "mid": pitches[len(pitches) // 2],
+            "notes": inst.notes,
+        })
+    if not desks:
+        raise RuntimeError("no playable tracks in the generated MIDI")
+
+    # ---- merge desks into families -----------------------------------------
+    #
+    # Wind, brass and percussion desks identify themselves by GM program. The
+    # strings do not: SymphonyGen scores the entire string choir with program 48
+    # ("String Ensemble"), so absolute pitch thresholds put every desk in the
+    # same bucket and collapsed a whole orchestra onto one track. Instead the
+    # string desks are ranked against each other within this piece and split into
+    # thirds — which is how the choir is actually laid out, highest desk to
+    # lowest, regardless of the absolute register the piece happens to sit in.
+    strings = [d for d in desks if not d["is_drum"] and _is_string(d["program"])]
+    others = [d for d in desks if d not in strings]
+
+    assigned = []
+    for d in others:
+        fam = "timpani" if d["is_drum"] else _family_for(d["program"], d["mid"])
+        assigned.append((fam, d))
+
+    strings.sort(key=lambda d: d["mid"], reverse=True)
+    if len(strings) >= 3:
+        cut = max(1, len(strings) // 3)
+        for i, d in enumerate(strings):
+            fam = "violins" if i < cut else ("violas" if i < cut * 2 else "celli")
+            assigned.append((fam, d))
+    else:
+        for d in strings:
+            assigned.append((_family_for(d["program"], d["mid"]), d))
+
+    merged: dict = {}
+    for fam, d in assigned:
+        slot = merged.setdefault(fam, {"program": d["program"], "notes": [], "_top": 0})
+        slot["notes"].extend(d["notes"])
+        # keep the most representative patch for the family: the one the largest
+        # desk uses, so "violins" doesn't get labelled with a stray solo patch
+        if len(d["notes"]) > slot["_top"]:
+            slot["_top"] = len(d["notes"])
+            slot["program"] = d["program"]
+
+    total_beats = max((n.end for s in merged.values() for n in s["notes"]),
+                      default=tpb * 4) / tpb
+
+    if not key or key.strip().lower() == "auto":
+        key = _detect_key([n for s in merged.values() for n in s["notes"]])
+
+    order = sorted(merged.items(), key=lambda kv: FAMILIES[kv[0]]["order"])
+    # composerkit takes the first 10 instruments and silently drops the rest, and
+    # one slot is spent on the muted drum track below — so 9 desks is the budget.
+    order = order[:9]
+
+    instruments = []
+    for fam, slot in order:
+        cfg = FAMILIES[fam]
+        # keep the model's own patch only when it is orchestral for this desk
+        prog = int(slot["program"])
+        if prog not in ORCHESTRAL_PATCHES[fam]:
+            prog = CANON_PROGRAM[fam]
+        # crc32, not hash(): str hashing is salted per process, so hash() here
+        # would make a fixed seed render differently on every run
+        rng = random.Random((seed * 7919 + zlib.crc32(fam.encode())) % (2 ** 31))
+        notes = sorted(slot["notes"], key=lambda n: (n.start, n.pitch))
+        override = []
+        for n in notes:
+            beat = round(n.start / tpb, 4)
+            dur = round(max(0.02, (n.end - n.start) / tpb), 4)
+            vel = _shape_velocity(beat, n.pitch, cfg["role"], tsig,
+                                  total_beats, rng)
+            override.append([beat, dur, int(n.pitch), vel])
+        if not override:
+            continue
+        instruments.append({
+            "track": FAMILY_LABEL[fam],
+            "role": cfg["role"],
+            "program": prog,
+            "notes_override": override,
+            "level": cfg["level"],
+            "pan": cfg["pan"],
+            "reverb": cfg["reverb"],
+            "delay": 0.0,
+            "drive": 0.0,
+            "tone": "warm",
+        })
+
+    # composerkit invents a drum kit and a bass part when no track claims those
+    # roles — a GM kit over an orchestral cue is not what anyone asked for. A
+    # muted drums track claims the role and renders silence (compose() short-
+    # circuits muted tracks), and the celli desk already carries "bass".
+    if not any(t["role"] == "drums" for t in instruments):
+        instruments.append({
+            "track": "drums", "role": "drums", "program": 0, "muted": True,
+            "level": 1.0, "pan": 0.0, "reverb": 0.0, "delay": 0.0,
+            "drive": 0.0, "tone": "neutral", "notes_override": None,
+        })
+    if not any(t["role"] == "bass" for t in instruments):
+        instruments.append({
+            "track": "bass", "role": "bass", "program": 43, "muted": True,
+            "level": 0.9, "pan": 0.0, "reverb": 0.0, "delay": 0.0,
+            "drive": 0.0, "tone": "neutral", "notes_override": None,
+        })
+
+    # ---- structure ----------------------------------------------------------
+    # The sections exist so the editor has a grid and the mix has movement; they
+    # do NOT gate the notes, which are overridden and span the whole piece. Bars
+    # must add up to the real length or the timeline ends before the music does.
+    total_bars = max(4, int(math.ceil(total_beats / tsig)))
+    names = ["opening", "build", "statement", "resolve"]
+    energies = [0.42, 0.62, 0.85, 0.55]
+    mode = "minor" if key.strip().lower().endswith("minor") else "major"
+    chords = _PROG[mode]
+    chunk = max(2, total_bars // 4)
+    sections, used = [], 0
+    for i in range(4):
+        bars = (total_bars - used) if i == 3 else min(32, chunk)
+        if bars < 2:
+            break
+        sections.append({
+            "name": names[i], "bars": int(bars), "energy": energies[i],
+            "tracks": [t["track"] for t in instruments if not t.get("muted")],
+            "fx": [],
+            # labelled in the detected key so composerkit's own key detection
+            # agrees with what we declared instead of relabelling the piece
+            "chords": chords,
+        })
+        used += bars
+
+    return {
+        "title": title,
+        "genre": genre,
+        "brief": brief or "orchestrated by SymphonyGen",
+        "notes": "Notes written by SymphonyGen; rendered and mixed by composerkit.",
+        "bpm": int(bpm),
+        "key": key,
+        "time_signature": tsig,
+        "seed": int(seed),
+        "swing": 0.0,
+        "sidechain": False,        # a pumping orchestra is not a look
+        "humanize": True,          # overridden parts skip timing/spread passes but
+                                   # still get the CC11 expression curve
+        "target_seconds": 0,       # 0 = do not rescale the structure
+        "instruments": instruments,
+        "sections": sections,
+        "planner": "symphonygen",
+    }
+
+
+# -------------------------------------------------------------------------- CLI
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    g = sub.add_parser("generate", help="generate an orchestration + score.json")
+    g.add_argument("--out", required=True, help="output directory")
+    g.add_argument("--variant", default="reinforced+track", choices=list(MODELS))
+    g.add_argument("--cond-midi", default="", help="re-orchestrate this MIDI")
+    g.add_argument("--forbid-piano", action="store_true")
+    g.add_argument("--title", default="Orchestration")
+    g.add_argument("--bpm", type=int, default=96)
+    g.add_argument("--key", default="auto")
+    g.add_argument("--seed", type=int, default=1234)
+    g.add_argument("--brief", default="")
+
+    s = sub.add_parser("score", help="convert an existing MIDI to a score")
+    s.add_argument("--midi", required=True)
+    s.add_argument("--title", default="Orchestration")
+    s.add_argument("--bpm", type=int, default=96)
+    s.add_argument("--key", default="auto")
+    s.add_argument("--seed", type=int, default=1234)
+    s.add_argument("--brief", default="")
+
+    a = ap.parse_args()
+    if a.cmd == "generate":
+        out = Path(a.out)
+        midi = generate(out, variant=a.variant, cond_midi=a.cond_midi,
+                        forbid_piano=a.forbid_piano, seed=a.seed)
+    else:
+        out = Path(a.midi).parent
+        midi = Path(a.midi)
+
+    score = midi_to_score(midi, title=a.title, bpm=a.bpm, key=a.key,
+                          seed=a.seed, brief=a.brief)
+    score_path = out / "score.json"
+    score_path.write_text(json.dumps(score, indent=2), encoding="utf-8")
+    # last line is JSON, matching how server.py reads composerkit
+    print(json.dumps({
+        "midi": str(midi),
+        "score": str(score_path),
+        "tracks": len([t for t in score["instruments"] if not t.get("muted")]),
+        "bars": score["sections"] and sum(s["bars"] for s in score["sections"]),
+        "notes": sum(len(t["notes_override"] or []) for t in score["instruments"]),
+    }))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+```
+
+## File 6 of 29 — `%USERPROFILE%\local-ai-studio\sf3convert.py`
 
 ```python
 #!/usr/bin/env python3
@@ -8404,7 +9182,7 @@ if __name__ == "__main__":
     sys.exit(main())
 ```
 
-## File 6 of 28 — `%USERPROFILE%\local-ai-studio\lullabykit\pipeline.py`
+## File 7 of 29 — `%USERPROFILE%\local-ai-studio\lullabykit\pipeline.py`
 
 ```python
 """
@@ -9786,7 +10564,7 @@ if __name__ == "__main__":
     main()
 ```
 
-## File 7 of 28 — `%USERPROFILE%\local-ai-studio\index.html`
+## File 8 of 29 — `%USERPROFILE%\local-ai-studio\index.html`
 
 ```html
 <!doctype html>
@@ -10821,15 +11599,31 @@ if __name__ == "__main__":
                   </div>
                 </div>
                 <div class="row">
+                  <div class="field"><label>Engine</label><select id="coEngine" onchange="coEngineChange()">
+                    <option value="arrange">Arrange — LLM plan + studio engine</option>
+                    <option value="orchestrate">Orchestrate — SymphonyGen (cinematic)</option>
+                  </select>
+                  <div class="note" id="coEngineNote">A local LLM plans the arrangement; the studio engine writes every note from your brief.</div></div>
+                </div>
+                <div class="row" id="coArrangeRow">
                   <div class="field"><label>Style</label><select id="coGenre"></select></div>
                   <div class="field"><label>Length — <span id="coSecsLab">2:30</span></label>
                     <input type="range" id="coSecs" min="45" max="360" step="15" value="150" oninput="coSecsLabel()"></div>
                 </div>
                 <div class="row">
-                  <div class="field"><label>Instruments — <span id="coTracksLab">6</span> <span class="note">tracks</span></label>
+                  <div class="field" id="coTracksField"><label>Instruments — <span id="coTracksLab">6</span> <span class="note">tracks</span></label>
                     <input type="range" id="coTracks" min="3" max="9" step="1" value="6" oninput="$('coTracksLab').textContent=this.value"></div>
                   <div class="field"><label>Song name <span class="note">— folder under compositions/</span></label>
                     <input type="text" id="coName" placeholder="auto from the date"></div>
+                </div>
+                <div class="row hide" id="coOrchRow">
+                  <div class="field"><label>Scoring</label><select id="coVariant">
+                    <option value="reinforced+track">Full — denser, more desks playing</option>
+                    <option value="reinforced">Sparser — more restrained scoring</option>
+                    <option value="pretrained">Raw — before reward tuning</option>
+                  </select></div>
+                  <div class="field"><label>Re-orchestrate <span class="note">— optional MIDI under compositions/</span></label>
+                    <input type="text" id="coCondMidi" placeholder="e.g. my_sketch/my_sketch.mid"></div>
                 </div>
                 <details class="adv"><summary>Advanced — key, tempo, seed, planner</summary>
                   <div class="adv-body">
@@ -10844,7 +11638,8 @@ if __name__ == "__main__":
                         <input type="number" id="coSeed" value="-1"></div>
                     </div>
                     <label class="chk"><input type="checkbox" id="coStems" checked> 🎚 Export per-instrument stems</label>
-                    <label class="chk"><input type="checkbox" id="coUseLlm" checked> 🧠 Let the LLM plan it <span class="note">(off = style template, no model needed)</span></label>
+                    <label class="chk" id="coUseLlmWrap"><input type="checkbox" id="coUseLlm" checked> 🧠 Let the LLM plan it <span class="note">(off = style template, no model needed)</span></label>
+                    <label class="chk hide" id="coForbidPianoWrap"><input type="checkbox" id="coForbidPiano"> 🎹 Keep the piano out <span class="note">(pure orchestra — no keyboard desk)</span></label>
                   </div>
                 </details>
               </div>
@@ -11561,10 +12356,12 @@ if __name__ == "__main__":
 
                   <div class="licnote">
                     Generated with <b>MiniMax H3</b> (MiniMax H3 Community Licence). The licence
-                    excludes the UK, EU, US and South Korea, and that restriction covers the videos
-                    you make, not just the model weights. Authorisation has been applied for —
-                    until it is granted, treat output as personal/local only and do not
-                    redistribute. Any commercial use must credit “MiniMax H3” on screen.
+                    restricts local deployment of the weights in the UK, EU, US and South Korea.
+                    <b>This machine holds individual authorisation from MiniMax</b>, granted under a
+                    separate agreement — it is personal and does not transfer with copies of this
+                    studio. When you share anything made here, the one binding obligation is to
+                    <b>clearly disclose that the content is AI-generated</b> (AUP item 12); a credit
+                    in the title or description is enough, on-screen branding is not required.
                   </div>
                 </fieldset>
               </div>
@@ -12026,6 +12823,36 @@ $('homeTiles').innerHTML = HOME_TILES.map(x=>`<div class="tile" data-tab="${x.ta
   <span class="tico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${x.ic}</svg></span>
   <b>${x.t}</b><span>${x.d}</span></div>`).join('');
 $('homeTiles').querySelectorAll('.tile').forEach(t=>t.addEventListener('click',()=>setActiveTab(t.dataset.tab)));
+
+/* Hide tabs whose backend was never installed.
+   Offering a tab that can only answer "model not found" is worse than not offering
+   it: the studio ships every panel, but a given machine may only have paid the disk
+   cost for some of them. /api/components probes what is actually present, so the
+   sidebar follows reality — run Studio Setup to add a component and it appears on
+   the next refresh. If the endpoint is missing (older server), everything shows,
+   which is the safe direction to fail. */
+(async function gateTabs(){
+  let avail;
+  try { avail = await (await fetch('/api/components',{cache:'no-store'})).json(); }
+  catch(e){ return; }
+  const off = t => (t in avail) && !avail[t];
+
+  document.querySelectorAll('.navitem[data-tab]').forEach(n=>{
+    if(off(n.dataset.tab)) n.style.display='none';
+  });
+  document.querySelectorAll('#homeTiles .tile[data-tab]').forEach(t=>{
+    if(off(t.dataset.tab)) t.style.display='none';
+  });
+  /* a group whose every item is hidden must not leave its heading behind */
+  document.querySelectorAll('.navgroup').forEach(g=>{
+    const items=[...g.querySelectorAll('.navitem')];
+    if(items.length && items.every(i=>i.style.display==='none')) g.style.display='none';
+  });
+  /* deep-linked (or remembered) tab that is now hidden -> fall back to Home
+     rather than leaving the user on an empty panel */
+  const active=document.querySelector('.navitem.active');
+  if(!active || active.style.display==='none') setActiveTab('home');
+})();
 
 /* file drop zones */
 function wireDrops(){
@@ -12615,9 +13442,25 @@ async function coLoadLibrary(){
   }
 }
 
+// The Orchestrate engine is a model, not a planner: SymphonyGen decides the
+// instrumentation itself and always writes 32 bars, so the controls that only
+// mean something to the template engine are hidden rather than silently ignored.
+function coEngineChange(){
+  const orch=$('coEngine').value==='orchestrate';
+  $('coArrangeRow').classList.toggle('hide',orch);
+  $('coTracksField').classList.toggle('hide',orch);
+  $('coOrchRow').classList.toggle('hide',!orch);
+  $('coUseLlmWrap').classList.toggle('hide',orch);
+  $('coForbidPianoWrap').classList.toggle('hide',!orch);
+  $('coEngineNote').textContent=orch
+    ? 'SymphonyGen scores 32 bars of orchestra directly — no LLM, no brief needed. ~40s to generate, then the usual render.'
+    : 'A local LLM plans the arrangement; the studio engine writes every note from your brief.';
+}
+
 async function coStart(){
   const brief=$('coBrief').value.trim();
-  if(!brief && !confirm('No brief given — compose a generic '+$('coGenre').value+' track?')) return;
+  const orch=$('coEngine').value==='orchestrate';
+  if(!orch && !brief && !confirm('No brief given — compose a generic '+$('coGenre').value+' track?')) return;
   $('coGo').classList.add('hide'); $('coCancel').classList.remove('hide');
   $('coBarWrap').classList.remove('hide'); $('coBar').style.width='0%';
   $('coZip').classList.add('hide'); stageBusy('coStage',true);
@@ -12629,11 +13472,16 @@ async function coStart(){
       key:$('coKey').value, bpm:+$('coBpm').value, seed:+$('coSeed').value,
       stems:$('coStems').checked, use_llm:$('coUseLlm').checked,
       humanize:$('coHumanize').checked,
+      engine:$('coEngine').value,
+      variant:$('coVariant').value,
+      forbid_piano:$('coForbidPiano').checked,
+      cond_midi:$('coCondMidi').value.trim(),
       polish:$('coPolish').checked, polish_denoise:+$('coPolishDen').value});
     coPoll();
   }catch(e){ setStatus('coStatus',e.message,'err'); coDone(); }
 }
 async function coCancel(){ try{ await post('/api/composer_cancel',{}); }catch(e){} }
+
 function coDone(){
   $('coGo').classList.remove('hide'); $('coCancel').classList.add('hide');
   stageBusy('coStage',false);
@@ -14113,7 +14961,7 @@ STORY=stBlank(); stRenderAll(); stRefreshList();
 </html>
 ```
 
-## File 8 of 28 — `%USERPROFILE%\local-ai-studio\studio_gui.pyw`
+## File 9 of 29 — `%USERPROFILE%\local-ai-studio\studio_gui.pyw`
 
 ```python
 #!/usr/bin/env python3
@@ -14681,7 +15529,7 @@ if __name__ == "__main__":
     main()
 ```
 
-## File 9 of 28 — `%USERPROFILE%\local-ai-studio\studioctl.ps1`
+## File 10 of 29 — `%USERPROFILE%\local-ai-studio\studioctl.ps1`
 
 ```powershell
 <#
@@ -15029,7 +15877,7 @@ switch ($Command) {
 exit $script:Failures
 ```
 
-## File 10 of 28 — `%USERPROFILE%\local-ai-studio\studio.cmd`
+## File 11 of 29 — `%USERPROFILE%\local-ai-studio\studio.cmd`
 
 ```bat
 @echo off
@@ -15045,7 +15893,7 @@ REM   studio monitor          live refreshing report
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0studioctl.ps1" %*
 ```
 
-## File 11 of 28 — `%USERPROFILE%\local-ai-studio\Studio Control Panel.cmd`
+## File 12 of 29 — `%USERPROFILE%\local-ai-studio\Studio Control Panel.cmd`
 
 ```bat
 @echo off
@@ -15071,13 +15919,49 @@ for %%P in (
   )
 )
 
+REM Fall back to Miniconda's base environment. Straight after an installer run none
+REM of the envs above exist yet - Studio Setup creates them - but Miniconda is a
+REM prerequisite and its base always has tkinter. Checked last, so a machine that is
+REM already provisioned keeps using exactly the interpreter it always did.
+for /f "delims=" %%C in ('where conda 2^>nul') do (
+  for %%D in ("%%~dpC..") do (
+    if exist "%%~fD\pythonw.exe" (
+      "%%~fD\pythonw.exe" -c "import tkinter" >nul 2>nul
+      if not errorlevel 1 (
+        start "" "%%~fD\pythonw.exe" "%GUI%"
+        goto :done
+      )
+    )
+  )
+)
+
+for %%P in (
+  "%LOCALAPPDATA%\miniconda3\pythonw.exe"
+  "%USERPROFILE%\miniconda3\pythonw.exe"
+  "%ProgramData%\miniconda3\pythonw.exe"
+) do (
+  if exist %%P (
+    %%P -c "import tkinter" >nul 2>nul
+    if not errorlevel 1 (
+      start "" %%P "%GUI%"
+      goto :done
+    )
+  )
+)
+
+echo.
 echo Could not find a Python with tkinter installed.
-echo Tried the ComfyUI venv and the conda envs.
+echo Tried the ComfyUI venv, the conda envs and the Miniconda base environment.
+echo.
+echo If you have just installed Local AI Studio, run Studio Setup first - it
+echo creates the environments this panel needs:
+echo     "%~dp0setup\Studio Setup.cmd"
+echo.
 pause
 :done
 ```
 
-## File 12 of 28 — `%USERPROFILE%\local-ai-studio\Studio Control Panel.vbs`
+## File 13 of 29 — `%USERPROFILE%\local-ai-studio\Studio Control Panel.vbs`
 
 ```vbs
 ' Launch the Local AI Studio visual control panel (studio_gui.pyw) with NO console
@@ -15109,11 +15993,32 @@ For Each p In cands
   End If
 Next
 
-MsgBox "Could not find a Python with tkinter installed." & vbCrLf & _
-       "Tried the ComfyUI venvs and the conda envs.", 48, "Local AI Studio"
+'  Fall back to Miniconda's base environment. Straight after an installer run none
+'  of the envs above exist yet - Studio Setup creates them - but Miniconda is a
+'  prerequisite and its base always has tkinter. Checked last, so a machine that is
+'  already provisioned keeps using exactly the interpreter it always did.
+Dim base
+base = Array( _
+  sh.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\miniconda3\pythonw.exe", _
+  home & "\miniconda3\pythonw.exe", _
+  sh.ExpandEnvironmentStrings("%ProgramData%") & "\miniconda3\pythonw.exe")
+
+For Each p In base
+  If fso.FileExists(p) Then
+    If sh.Run("""" & p & """ -c ""import tkinter""", 0, True) = 0 Then
+      sh.Run """" & p & """ """ & gui & """", 0, False
+      WScript.Quit 0
+    End If
+  End If
+Next
+
+MsgBox "Could not find a Python with tkinter installed." & vbCrLf & vbCrLf & _
+       "If you have just installed Local AI Studio, run Studio Setup first -" & vbCrLf & _
+       "it creates the environments this panel needs." & vbCrLf & vbCrLf & _
+       "Start Menu > Local AI Studio > Local AI Studio Setup", 48, "Local AI Studio"
 ```
 
-## File 13 of 28 — `%USERPROFILE%\Documents\ComfyUI\custom_nodes\ram_websocket_save.py`
+## File 14 of 29 — `%USERPROFILE%\Documents\ComfyUI\custom_nodes\ram_websocket_save.py`
 
 ```python
 """RAM-only image output for the Local AI Studio.
@@ -15163,7 +16068,7 @@ NODE_CLASS_MAPPINGS = {"SaveImageWebsocket": SaveImageWebsocket}
 NODE_DISPLAY_NAME_MAPPINGS = {"SaveImageWebsocket": "Save Image (Websocket · RAM-only)"}
 ```
 
-## File 14 of 28 — `%USERPROFILE%\Documents\ComfyUI\custom_nodes\ace15_studio_encode.py`
+## File 15 of 29 — `%USERPROFILE%\Documents\ComfyUI\custom_nodes\ace15_studio_encode.py`
 
 ```python
 """AceStep15StudioEncode: TextEncodeAceStepAudio1.5 with optional musical metas.
@@ -15220,7 +16125,7 @@ NODE_CLASS_MAPPINGS = {"AceStep15StudioEncode": AceStep15StudioEncode}
 NODE_DISPLAY_NAME_MAPPINGS = {"AceStep15StudioEncode": "TextEncode ACE-Step 1.5 (studio, auto metas)"}
 ```
 
-## File 15 of 28 — `%USERPROFILE%\.claude\skills\local-llm\SKILL.md`
+## File 16 of 29 — `%USERPROFILE%\.claude\skills\local-llm\SKILL.md`
 
 ````markdown
 ---
@@ -15270,7 +16175,7 @@ The script prints only the model's text reply to stdout (errors to stderr, non-z
   if you want max coding quality later.
 ````
 
-## File 16 of 28 — `%USERPROFILE%\.claude\skills\local-llm\scripts\ask.py`
+## File 17 of 29 — `%USERPROFILE%\.claude\skills\local-llm\scripts\ask.py`
 
 ```python
 #!/usr/bin/env python3
@@ -15414,7 +16319,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-## File 17 of 28 — `%USERPROFILE%\.claude\skills\local-image\SKILL.md`
+## File 18 of 29 — `%USERPROFILE%\.claude\skills\local-image\SKILL.md`
 
 ````markdown
 ---
@@ -15481,7 +16386,7 @@ Reuse the bundled `image-gen` skill's `cutout.py` (rembg) for alpha cutout:
 - First generation loads ~11GB of weights; subsequent ones are fast. Free Ollama VRAM before generating.
 ````
 
-## File 18 of 28 — `%USERPROFILE%\.claude\skills\local-image\scripts\gen.py`
+## File 19 of 29 — `%USERPROFILE%\.claude\skills\local-image\scripts\gen.py`
 
 ```python
 #!/usr/bin/env python3
@@ -15835,7 +16740,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-## File 19 of 28 — `%USERPROFILE%\.claude\skills\local-music\scripts\musicgen.py`
+## File 20 of 29 — `%USERPROFILE%\.claude\skills\local-music\scripts\musicgen.py`
 
 ```python
 #!/usr/bin/env python3
@@ -16161,7 +17066,7 @@ if __name__ == "__main__":
     sys.exit(main())
 ```
 
-## File 20 of 28 — `%USERPROFILE%\.claude\skills\local-stt\SKILL.md`
+## File 21 of 29 — `%USERPROFILE%\.claude\skills\local-stt\SKILL.md`
 
 ````markdown
 ---
@@ -16194,7 +17099,7 @@ with ffmpeg if available (else convert first: `ffmpeg -i in.mp3 -ar 16000 -ac 1 
 - Requires the `nemo-asr` conda env (NVIDIA NeMo + CUDA torch). The transcript is the LAST stdout line.
 ````
 
-## File 21 of 28 — `%USERPROFILE%\.claude\skills\local-stt\scripts\transcribe.py`
+## File 22 of 29 — `%USERPROFILE%\.claude\skills\local-stt\scripts\transcribe.py`
 
 ```python
 #!/usr/bin/env python3
@@ -16325,7 +17230,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-## File 22 of 28 — `%USERPROFILE%\.claude\skills\local-tts\SKILL.md`
+## File 23 of 29 — `%USERPROFILE%\.claude\skills\local-tts\SKILL.md`
 
 ````markdown
 ---
@@ -16365,7 +17270,7 @@ Writes a wav to `--out` (default `tts_out.wav`) and prints its path to stdout.
   `pkg_resources`, which the Perth watermarker needs) and installed the cu124 torch build for GPU.
 ````
 
-## File 23 of 28 — `%USERPROFILE%\.claude\skills\local-tts\scripts\speak.py`
+## File 24 of 29 — `%USERPROFILE%\.claude\skills\local-tts\scripts\speak.py`
 
 ```python
 #!/usr/bin/env python3
@@ -16543,7 +17448,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-## File 24 of 28 — `%USERPROFILE%\.claude\skills\local-tts\scripts\voicechange.py`
+## File 25 of 29 — `%USERPROFILE%\.claude\skills\local-tts\scripts\voicechange.py`
 
 ```python
 #!/usr/bin/env python3
@@ -16640,7 +17545,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-## File 25 of 28 — `%USERPROFILE%\.claude\skills\local-voice\scripts\xtts_train.py`
+## File 26 of 29 — `%USERPROFILE%\.claude\skills\local-voice\scripts\xtts_train.py`
 
 ```python
 #!/usr/bin/env python3
@@ -16785,7 +17690,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-## File 26 of 28 — `%USERPROFILE%\.claude\skills\local-voice\scripts\xtts_infer.py`
+## File 27 of 29 — `%USERPROFILE%\.claude\skills\local-voice\scripts\xtts_infer.py`
 
 ```python
 #!/usr/bin/env python3
@@ -16889,7 +17794,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-## File 27 of 28 — `%USERPROFILE%\.claude\skills\local-voice\scripts\scripts.json`
+## File 28 of 29 — `%USERPROFILE%\.claude\skills\local-voice\scripts\scripts.json`
 
 ```json
 [
@@ -16936,7 +17841,7 @@ if __name__ == "__main__":
 ]
 ```
 
-## File 28 of 28 — `%USERPROFILE%\.claude\skills\local-tts\scripts\zonos_tts.py`
+## File 29 of 29 — `%USERPROFILE%\.claude\skills\local-tts\scripts\zonos_tts.py`
 
 ```python
 #!/usr/bin/env python3

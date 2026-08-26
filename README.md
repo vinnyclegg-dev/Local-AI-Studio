@@ -75,7 +75,7 @@ Plus a CLI (`studioctl.ps1`) and a visual control panel (`studio_gui.pyw`, with 
 
 ### Video in detail
 
-**MiniMax H3 — text → video with native audio, generated in one pass.** ⚠️ Licence excludes the UK, EU, US, and South Korea — see the notice below before sharing anything made here.
+**MiniMax H3 — text → video with native audio, generated in one pass.** ⚠️ Licence restricts local deployment in the UK, EU, US, and South Korea, and anything you share must be disclosed as AI-generated — see the notice below.
 
 ![Video — mid-render](docs/screenshots/17_video.png)
 
@@ -226,22 +226,37 @@ territories are:
 
 > **the European Union · the United Kingdom · the United States · the Republic of Korea**
 
-Two consequences that are easy to miss:
+Two things that are easy to miss:
 
-1. **The restriction follows the output, not just the weights.** The licence covers use,
-   reproduction, modification, distribution and display of the model *"or any of their Outputs
-   or results"* outside the Applicable Territory. A video you generate is an Output.
-2. **Commercial use requires on-screen attribution.** Any commercial product must
-   prominently display **"MiniMax H3"** in its user interface. (Above $20M annual revenue you
-   also need prior written authorisation from MiniMax.)
+1. **The licence text extends to outputs, but MiniMax reads it narrowly.** The agreement
+   covers use, reproduction, modification, distribution and display of the model *"or any of
+   their Outputs or results"* outside the Applicable Territory (§V.4) — read literally, a video
+   you generate is an Output. In their official licence Q&A, however, MiniMax has told creators
+   in non-excluded territories that globally distributed content needs no further authorisation,
+   which puts the real restriction on **local deployment of the weights**, not on where a
+   finished video can be watched. Both readings are recorded here because the text and the
+   clarification do not perfectly agree.
+2. **The one mandatory obligation is AI disclosure, not branding.** MiniMax's official
+   answer is that the binding requirement is AUP Item 12 — *clearly disclose that the content
+   is AI-generated*. Verbatim from the same thread: *"You are not required to add embedded
+   MiniMax-H3 branding"*, and attribution in a title or description is sufficient. Crediting
+   "MiniMax H3" is good practice and is what this studio does, but it is not a licence
+   condition. (Above $20M annual revenue you do need prior written authorisation from MiniMax.)
 
-   
+If you live in an Excluded Territory you can apply for individual authorisation:
 
-You can apply for authorisation if you do live in these regions.
+**Licence request form → https://platform.minimax.io/h3-license**
 
-https://huggingface.co/MiniMaxAI/MiniMax-H3/discussions/12
+MiniMax have confirmed that individuals may apply — enter `Personal/None` where the form asks
+for a company name. Their official licence Q&A thread, which is the source for the
+clarifications above, is at
+<https://huggingface.co/MiniMaxAI/MiniMax-H3/discussions/12>.
 
-Until it is granted to you, treat the Video tab as **local and personal only** — do not redistribute, publish or commercially use its
+**Status for this repository's maintainer:** individual authorisation for local deployment has
+been granted by MiniMax under a separate agreement. That authorisation is personal to the
+maintainer and does **not** transfer to anyone who clones this repository.
+
+Until you hold your own, treat the Video tab as **local and personal only** — do not redistribute, publish or commercially use its
 output. Every other tab in this studio is unaffected. The Video tab carries this same notice
 in-app so it cannot be missed. The **setup package now installs it** (`SETUP_FOR_CLAUDE.md`
 PHASE 5h), which is why that phase opens by putting this notice in front of the user and asking
