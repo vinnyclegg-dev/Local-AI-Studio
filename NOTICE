@@ -1,0 +1,9 @@
+Local AI Studio
+Copyright 2026 vinnyclegg-dev (https://github.com/vinnyclegg-dev)
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+The licence covers Local AI Studio's own source code and documentation. The
+third-party models, tools and libraries the setup runbook downloads are not
+part of this product and keep their own licences; see "Credits & licensing" and "Licence"
+in README.md.

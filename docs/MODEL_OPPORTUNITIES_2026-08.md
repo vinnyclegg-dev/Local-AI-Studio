@@ -53,6 +53,23 @@ sound library.
 *(Also noted: `LTX-2.3-22b-LoRA-Foley-V2A` is a dedicated video→audio adapter, but it pulls in
 the LTX stack this studio doesn't otherwise run.)*
 
+> **Update, 2026-08-27 — this recommendation was wrong, and here is the correction.**
+> The Sound Effects tab shipped on Stable Audio Open 1.0 and was moved off it within a day.
+> SAO is a *music* model doing SFX as a side job, and in use it consistently got the
+> **material** right while missing the **event**: "a glass bottle smashing" came out as glass
+> tapping, and a typewriter as an even metronome rather than uneven human typing. Sony's Woosh
+> paper measures the same gap as a **66% CLAP difference** — CLAP being the prompt-adherence
+> metric — so the weakness was in the benchmarks all along and this document did not weigh it.
+>
+> The fix was neither of the two options above: **Stable Audio 3.0 Small SFX**, the variant
+> Stability trained specifically for sound effects. Same licence family as SAO, no Woosh
+> non-commercial problem, *smaller* (3.3 GB against 5.5 GB), already supported by the
+> installed ComfyUI, and distilled to 8 steps so a take renders in about a second.
+>
+> The lesson worth keeping: "commercially usable" narrowed the field to two, and neither was
+> the right answer. The purpose-built variant was a third option that a licence-first
+> comparison never surfaced.
+
 ### 3. Image → 3D
 
 **TRELLIS 2** turns a single image into a textured 3D asset inside ComfyUI. It is the only

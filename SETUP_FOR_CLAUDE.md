@@ -17,20 +17,65 @@ A local web app at **http://127.0.0.1:8800** with these tabs / features:
 
 | Tab | What it does | Backend |
 |---|---|---|
-| 🧠 Language | Code / research / vision prompts to a local LLM, with a 🔓 Unlocked (uncensored) option | Ollama |
+| 🧠 Language | Code / research / vision prompts to a local LLM, with a 🔓 Unlocked (uncensored) option. The model can also **write real files**: it emits `===FILE <name>` blocks, `server.py` writes them into a sandboxed `workspace\` folder (no model-supplied path can resolve outside it), and an artifact panel beside the chat previews, hand-edits, saves, renames and deletes them — HTML renders live in an iframe. **Conversations persist**, one JSON per thread in `chats\`, listed beside the chat and resumable; the transcript is owned by the SERVER, so the browser holds an id rather than a history and `do_chat` builds the continuation prompt itself | Ollama |
 | 🎨 Image — Generate | Text→image (FLUX.2 Klein) | ComfyUI |
 | ✂️ Image — Edit | Reference-guided edit / remove / reframe / outpaint | ComfyUI |
 | 🕹️ Sprite Studio | One reference image → style-matched 2D game sprites: single actions (9 built-ins with hand-written pose scripts, or a custom motion) or a full animation set (idle/walk/run/jump/fall/crouch/attack/hurt/death). True transparent backgrounds (rembg), per-action strips + combined sheet with engine-ready JSON, per-frame ↻ re-roll with automatic backups; sets persist in `sprites\` | ComfyUI (FLUX.2 ReferenceLatent) + `spritekit.py` in the ComfyUI venv |
+| 🧊 Image → 3D | One reference image → a 3D mesh (**Hunyuan3D 2.1**), saved as `.glb` in `meshes\`. Takes the same kind of single reference image Sprite Studio does. Geometry only — the mesh arrives untextured, ready for Blender. Two traps worth knowing before you touch the controls: `resolution` is a **token count**, not a spatial grid (drop far below 3072 and you get an *empty* mesh, not a coarse one), and Hunyuan3D rebuilds whatever surface it is shown — so the background is cut out first, or a character on a plain backdrop comes back as the backdrop. The result is shown in a WebGL viewer written into `index.html`, not a bundled library. See PHASE 5j | ComfyUI + `mesh3d.py` |
 | 🎬 Video | Text → video **with native stereo audio**, both produced by one sampler pass (**MiniMax H3**) — there is nothing to mux afterwards. Three input modes: **Text → video**; **First / last frame** (one keyframe = image→video, both = H3 interpolates between them); and **References**, taking up to **9 images, 3 video clips (each with its own optional soundtrack) and 3 audio clips**, addressed in the prompt as `<Picture 1>`, `<Video 1>`, `<Audio 1>`, to carry identity, motion, camera style or a cloned voice into the result. Up to 15 s at 24 fps. Renders at H3's **native 768 short edge** — below native the model composes a scene and then barely animates it (89/100 near-static frames at 480 vs 0/100 at 768, same prompt and seed), so the tab sizes by short edge, not megapixels. The ~21 GB int8 unets stream through 16 GB of VRAM via ComfyUI's per-module offload, with a **measured, self-correcting ETA** (load/sample/decode timings cached per geometry) rather than a spinner. ⚠️ **Territory-restricted licence — read the notice in PHASE 5h before generating or sharing anything.** | ComfyUI (native H3 nodes) + `h3gen.py` |
 | 🎼 Composer | A brief → a finished, arranged, mixed instrumental, as a 3-step wizard (**Set up → Arrange → Export**). Two engines: **Arrange** (the local LLM plans, `composerkit.py` writes every note) and **Orchestrate** (**SymphonyGen** — a 211M-parameter orchestral model writes 32 bars of multitrack score itself, no LLM involved, ~37s; see PHASE 9). In **Arrange**, the local LLM plans the *musical direction* (instruments + role, key, tempo, section structure, chord progression per section, mix and automation moves); `composerkit.py` writes the actual notes, because note-level output from a 20B local model isn't reliable enough to listen to. Instruments come from the bundled SoundFonts played by FluidSynth — free, already on disk, and the GM bank fits the 800 MB "plugin budget"; piano tracks are routed to the sampled Salamander Grand. Every track gets its own stem and channel strip: saturation, tone shelves, a time-varying lowpass, tempo-synced ping-pong delay and convolution reverb with **automated** send levels, plus volume/pan automation, risers, sub impacts, downlifters, drop silences and kick sidechaining. A **performance pass** (within-note CC11 swells, guitar strums/piano rolls, correlated timing drift with per-role feel, drum round-robin) is what stops it sounding like MIDI. Step 2 is a DAW-style editor: clip grid per track × section, channel strips, chord/energy/FX editing, and a **piano roll** for hand-editing notes — edits re-render in place with no LLM call. Optional ACE-Step re-texture pass ships *alongside* the clean master for A/B. Outputs master MP3/WAV, per-instrument FLAC stems, multitrack MIDI with pan/volume CCs, plus `score.json` and `arrangement.md` | Ollama (planning) + **SymphonyGen** (`symphgen.py`) + `composerkit.py` (FluidSynth + numpy/scipy, CPU) |
 | 🎵 Music Generation | Full songs & instrumentals from style tags + lyrics (**ACE-Step 1.5 XL**, hybrid planning-LM + DiT; **turbo default** for smooth vocals + speed, sft selectable for max prompt adherence). Structure/vocal/energy lyric-tag toolbar, BPM/Key/time-signature (Auto = model decides), planner creativity/guidance sliders, annotated sampler/scheduler picks, auto-retry on degenerate seeds, -1 dB peak limiting; remix mode | ComfyUI (git checkout) |
+| 🔊 Sound Effects | Foley, impacts and ambience from a description (**Stable Audio 3.0 Small SFX**) — the third leg of game audio next to ACE-Step's music and the TTS engines' voice. Renders several takes at once, because picking between takes is the whole workflow for sound design. Distilled: 8 steps, cfg 1.0, `lcm` — more steps do nothing, and at cfg 1.0 guidance is off so there is no negative prompt. The tab asks for the source, the material, the space, and — the field that decides whether you get a smash or a tap — how the sound changes over time. See PHASE 5i | ComfyUI + `sfxgen.py` |
 | 🎹 Lullaby | Any song → a soft lullaby instrumental. A workbench splits the song into 6 stems (vocals/guitar/piano/other/bass/drums) with scrubbable previews so you choose what carries into the result, then one of three engines: **Remix** (default — drums dropped, dynamics flattened, then ACE-Step audio2audio re-imagines it with lullaby tags at a user-set denoise; closest to the original) · **Piano** (melody transcribed + key/chords detected, rebuilt as a rocking piano + music-box arrangement at 55–88bpm on a sampled grand) · **Melody Match** (traces each sung NOTE's actual continuous pitch curve via FCPE — no scale-snap/quantization, only real note boundaries — onto a portamento-capable instrument: cello/violin/flute/synth voice/music box; per-track **Route** selector lets some ticked stems go through Melody Match while others go through a full Piano-style rebuilt arrangement in the same render, mixed together; optional ACE-Step polish pass on the result) | `lullabykit` (2-pass Demucs + basic-pitch/FCPE + librosa + FluidSynth) + ACE-Step |
 | ✂️ Track Splitter | Any song → its 6 individual instrument tracks (vocals/guitar/piano/other/bass/drums), each with its own scrubbable player and download, a "download all" zip, and a persistent library of past splits — shares its separation cache with the Lullaby tab | `lullabykit` (Demucs) |
 | 🎙️ Speech → Text | Transcribe audio | NeMo Parakeet (conda env) |
-| 🔊 Text → Speech | Narration (Kokoro) and voice-cloning (Chatterbox) | conda envs |
+| 🔊 Text → Speech | Narration (Kokoro) and voice-cloning (Chatterbox), with a one-click **Clean up this recording** pass (DeepFilterNet denoise + de-reverb) on the cloning reference clip — cloning quality is capped by whatever mic and room the reference came from. Runs CPU-only in its own env, so cleaning a clip never evicts the loaded voice model | conda envs |
 | 🗣️ Voice Studio | Fine-tune & reuse a personal XTTS-v2 voice | conda env |
 | 📖 Story Maker | Timeline-driven multi-scene story generation | koboldcpp (Cydonia-24B) / Ollama |
 | 📚 Audiobook | Story project or pasted text → chaptered MP3s with any loaded narrator. Natural pacing (sentence/paragraph/chapter pause tiers), engine-aware chunk sizes, click-free joins, one consistent XTTS narrator (pinned seed), EBU R128 loudness normalization (−19 LUFS) | loaded TTS worker + ffmpeg |
+
+### One job queue in front of all of it
+
+**There are no per-tab Load buttons.** Every tab submits its work to a single job queue
+(`POST /api/queue/add` with a job *kind*), and one runner per lane drains it — loading, unloading
+and swapping models on the way. The user lines up work from any number of tabs and walks away.
+
+What the runbook implementer needs to know about it, because it shapes `server.py`:
+
+- **`JobQueue` + `Runner`, one runner per lane.** Two lanes: `gpu` (the only thing that loads or
+  unloads models) and `cpu` (speech enhance, Composer's FluidSynth re-render), so CPU work does not
+  queue behind a render. A **single-threaded** runner is what makes the eight existing one-at-a-time
+  job classes (`SpriteJob`, `H3Job`, `ComposerJob`, …) safe to line up: each still rejects a second
+  concurrent start, and that rejection is now unreachable. `drive_singleton()` starts one, mirrors its
+  progress onto the queue entry and forwards cancels; the job classes keep their own ETA and errors.
+- **Measured ETAs, from `_tmp\job_timings.json`.** Every completed job saves its duration under a
+  cost key (kind + the params that actually change the time), and every model load is timed under its
+  model key. The queue total is the running job's remainder + each pending job's measured estimate +
+  a load wherever the model key changes. **If any leg has never been measured the total is `null`**
+  and the UI says *measuring…* — a partial sum presented as a total is a lie.
+- **Same-model coalescing.** A load costs 20 s–3 min, so if the head of the queue wants a different
+  model than the one resident, the queue pulls forward a later job that wants the resident one.
+  Bounded by `QUEUE_MAX_SKIP = 6` so a steady drip of image jobs cannot strand a video job forever;
+  a hand reorder (`/api/queue/move`) sets the skip count to the cap so it is never jumped.
+- **Persistence.** `_tmp\queue.json` is rewritten on every change. On restart, work that was running
+  is re-queued (its output is at best half-written) and priority work is dropped — the browser call
+  that was waiting on it is long gone. **Results are never persisted**: an image result is a
+  multi-MB data URL and stays in RAM.
+- **Uploads are staged at submit time.** `Stager` writes them under `_tmp\queue\<id>\`, so the
+  queue file holds paths rather than base64, and the folder dies with the job.
+- **Validation runs inside the HTTP request** that queues the job, so a typo fails immediately rather
+  than forty minutes later.
+- **Priority jumps the line.** Interactive work — `chat`, `stt`, `tts`, `voice`, `enhance` — is
+  submitted with `priority` and `wait:true`, which keeps the tabs' existing single-call shape: the
+  POST blocks until the job runs, but it runs next.
+- **Exclusive jobs.** `sfx`, `mesh3d`, `split`, `lullaby*` and `voice_train` claim the whole card
+  themselves (`claim_gpu()`), so the queue frees the GPU for them and leaves the slot empty
+  afterwards. This is what replaced *"stop the loaded model first"*.
+- **Pinning is the opt-out.** `/api/pin` holds one model resident for rapid iteration on a single
+  tab; anything queued that would evict it waits with `blocked = "pin"` and says so in the drawer.
+- **The whole UI polls one endpoint.** `GET /api/queue` carries every job's progress, the resident
+  model and the pin state, so the per-tab pollers are gone. Results are fetched once, per job, from
+  `/api/queue/result?id=` when the panel sees it finish.
 
 Plus two control tools: **`studioctl.ps1`** (CLI) and **`studio_gui.pyw`** (a visual control panel) that
 start / stop / monitor the whole stack (Ollama + ComfyUI + the studio server), and a **Desktop shortcut**
@@ -39,8 +84,11 @@ start / stop / monitor the whole stack (Ollama + ComfyUI + the studio server), a
 ## Hard requirements & ground rules
 
 - **OS:** Windows 10/11 (the control tools, conda envs and install paths assume Windows).
-- **GPU:** an NVIDIA GPU with a current driver. **~16 GB VRAM** is the design target. The studio loads
-  **one heavy model at a time** — this is by design, never run two large models concurrently.
+- **GPU:** an NVIDIA GPU with a current driver. **~16 GB VRAM** is the design target. The studio keeps
+  **one heavy model resident at a time** — this is by design, never run two large models concurrently.
+  The job queue is what enforces it: the user queues work from every tab at once and the queue runs it
+  one job after another, swapping models between them. Nothing in the UI asks the user to load or free
+  anything.
 - **Disk:** ~**158 GB** free for the required model set (~**178 GB** with the optional uncensored image
   model and Unlocked LLM). The largest items: **MiniMax H3 ~63 GB** (two 21 GB unets + a 16 GB text
   encoder + VAEs — by far the biggest single feature; PHASE 5h), ACE-Step 1.5 files ~30 GB,
@@ -126,13 +174,13 @@ $dirs | ForEach-Object { New-Item -ItemType Directory -Force -Path $_ | Out-Null
 ```
 
 Now write each embedded file (use the Write tool; create parent folders if needed). The complete list is
-in *EMBEDDED SOURCE FILES* — 29 files in total.
+in *EMBEDDED SOURCE FILES* — 32 files in total.
 
 ---
 
 ## PHASE 3 — Create the conda environments
 
-Five conda envs back the audio / voice / score workers. Create each with the **exact** pins below (these match a
+Six conda envs back the audio / voice / score workers. Create each with the **exact** pins below (these match a
 known-good install). Run from an Anaconda Prompt or after `conda init powershell`.
 
 ```powershell
@@ -165,6 +213,19 @@ conda run -n symphgen pip install torch==2.8.0+cu128 torchaudio==2.8.0+cu128 --i
 conda run -n symphgen pip install "transformers==5.1.0" miditoolkit==1.0.1 mido==1.3.3 numpy tqdm
 #   ^ deliberately NOT lullabykit's venv: the model needs torch, composerkit renders without it,
 #     and symphgen.py never imports composerkit — the two halves run as separate processes.
+
+# --- enhance: DeepFilterNet speech denoise / de-reverb for cloning reference clips.
+# CPU-only on purpose - it runs on 5-30s clips in a couple of seconds, and staying off
+# the GPU means cleaning a reference never evicts a loaded voice model.
+# torch is PINNED to 2.1.2: deepfilternet 0.5.6 imports torchaudio.backend.common,
+# which newer torchaudio removed. Installing plain `torch` here gives you a working
+# install that fails on first use with ModuleNotFoundError.
+conda create -y -n enhance python=3.11
+conda activate enhance
+pip install "numpy<2"
+pip install torch==2.1.2 torchaudio==2.1.2 --index-url https://download.pytorch.org/whl/cpu
+pip install deepfilternet soundfile
+conda deactivate
 ```
 
 > Each env is deliberately separate — their torch / transformers / setuptools requirements conflict and
@@ -488,6 +549,59 @@ Get-ChildItem "$M\diffusion_models\minimax_h3_*","$M\text_encoders\qwen3vl_32b_m
 # expect: fl2va 19.53 · ref2va 19.53 · qwen3vl_32b nvfp4 14.61 · video vae 4.85 · audio vae 0.56
 ```
 
+### 5i. Sound Effects tab — Stable Audio 3.0 Small SFX (~3.3 GB)
+
+Foley, impacts and ambience. Two files, both ungated.
+
+> This tab originally shipped on **Stable Audio Open 1.0** and was moved off it. SAO is a
+> *music* model doing SFX as a side job, and it consistently got the material right while
+> missing the event — "a glass bottle smashing" came back as glass tapping, and a
+> typewriter as an even metronome rather than uneven human typing. Sony's Woosh paper
+> measures that gap as a 66% CLAP difference. **Do not install Stable Audio Open here.**
+
+```powershell
+$M = "$HOME\Documents\ComfyUI\models"
+New-Item -ItemType Directory -Force "$M\checkpoints","$M\text_encoders" | Out-Null
+$repo = "https://huggingface.co/Comfy-Org/stable-audio-3/resolve/main"
+curl.exe -L -o "$M\checkpoints\stable_audio_3_small_sfx.safetensors" "$repo/checkpoints/stable_audio_3_small_sfx.safetensors"
+curl.exe -L -o "$M\text_encoders\t5gemma_b_b_ul2.safetensors"        "$repo/text_encoders/t5gemma_b_b_ul2.safetensors"
+```
+
+Three things about SA3 that are easy to get wrong, all confirmed from ComfyUI's own
+bundled Stable Audio 3 template — `sfxgen.py` already encodes them:
+
+- It is **distilled**: 8 steps, cfg 1.0, `lcm` sampler. Raising steps does nothing.
+- At cfg 1.0 **guidance is off, so a negative prompt has no effect.** The tab does not
+  offer one; say what you want, not what you don't.
+- It expects **`Length: N seconds` in the prompt text**, not just a latent size.
+  `sfxgen.py` appends it automatically.
+
+### 5j. Image → 3D tab — Hunyuan3D 2.1 (~6.9 GB)
+
+One reference image → an untextured `.glb`. A single all-in-one checkpoint: ComfyUI's
+`ImageOnlyCheckpointLoader` pulls the model, CLIP vision and VAE out of it, so there is
+no separate text encoder to fetch.
+
+```powershell
+$M = "$HOME\Documents\ComfyUI\models"
+curl.exe -L -o "$M\checkpoints\hunyuan_3d_v2.1.safetensors" `
+  "https://huggingface.co/Comfy-Org/hunyuan3D_2.1_repackaged/resolve/main/hunyuan_3d_v2.1.safetensors"
+```
+
+Two traps worth knowing, both of which produce a *valid file containing nothing useful*:
+
+1. **`EmptyLatentHunyuan3Dv2`'s `resolution` is a token count, not a spatial grid.** Its
+   default is 3072. Passing an image-style 384 produced a well-formed `.glb` holding 636
+   triangles of flat nonsense — the shape had almost no tokens to exist in.
+2. **Hunyuan3D reconstructs whatever surface it is shown.** A character on a plain
+   backdrop comes back as *the backdrop* — two flat planes — on every crop setting. The
+   tab therefore removes the background with rembg before generating, on by default.
+   This is the single difference between a mesh and a wall.
+
+The mesh arrives untextured and this tab does not texture it. ComfyUI's texture nodes
+(Meshy, Tripo, Tencent) are all paid cloud APIs, and Hunyuan3D's paint half is not in the
+Comfy-Org repackage — so texturing means taking the `.glb` into Blender.
+
 ## PHASE 6 — Launch & verify
 
 ```powershell
@@ -499,26 +613,51 @@ powershell -ExecutionPolicy Bypass -File "$HOME\local-ai-studio\studioctl.ps1" s
 (Invoke-WebRequest http://127.0.0.1:11434/api/tags -UseBasicParsing).StatusCode     # Ollama 200
 ```
 
-Then open **http://127.0.0.1:8800** and smoke-test each tab:
-1. **Language** → Load → ask "say hello" (returns text).
-2. **Image — Generate** → Load → 1 step, any prompt (returns an image).
-3. **Sprites** → with the image model still loaded from step 2: drop in any character image,
-   **Single action** → idle, frame size 256, Generate → 4 frames render one-by-one with live
-   progress, then get transparent backgrounds + an `idle_sheet.png` strip (checkerboard behind the
-   thumbs proves real alpha). Files land in `local-ai-studio\sprites\<set>\`.
-4. **Text → Speech** → Load (Kokoro) → speak a line; then **Speech → Text** → Load → transcribe that wav.
-5. **Voice Studio** loads without error.
-6. **Story Maker** → **Load story model** (koboldcpp + Cydonia-24B; ~40s, frees other models) →
-   Open a story → **Generate** writes chapter-by-chapter. Verify `:5001` answers:
+Then open **http://127.0.0.1:8800** and smoke-test each tab. **Nothing is loaded by hand** — every
+step below is *submit and wait*; the queue loads what the job needs. The topbar **Queue** button shows
+the count and a countdown, and the drawer shows what is running and what it is waiting for.
+
+1. **Language** → ask "say hello" (returns text). Then ask it to *"write hello.html, a page that says
+   hello"* — a **Workspace** panel appears on the right with `hello.html` in it, previewed live, and
+   the file is really on disk at `local-ai-studio\workspace\hello.html`. Now **reload the page**:
+   the conversation is still there, because it lives in `local-ai-studio\chats\<id>.json` and not
+   in the browser. Press **✦ New chat**, ask something else, then open the first thread again from
+   the **💬 Chats** list — both are kept, named after their opening question.
+2. **Image — Generate** → 1 step, any prompt (returns an image). Watch the queue drawer say
+   *loading image:base4b* first — that is the queue doing what the Load button used to.
+3. **Sprites** → drop in any character image, **Single action** → idle, frame size 256, Generate →
+   4 frames render one-by-one with live progress, then get transparent backgrounds + an
+   `idle_sheet.png` strip (checkerboard behind the thumbs proves real alpha). Files land in
+   `local-ai-studio\sprites\<set>\`. Because the image model is already resident from step 2, the
+   drawer should show **no** load line — that is the coalescing working.
+4. **Text → Speech** → speak a line; then **Speech → Text** → transcribe that wav. Both are
+   priority jobs, so they answer immediately even with a render queued behind them.
+5. **Voice Studio** opens without error.
+6. **Story Maker** → open a story → **Generate** writes chapter-by-chapter (koboldcpp + Cydonia-24B;
+   the queue starts it, ~40 s, and frees other models first). Verify `:5001` answers:
    `(Invoke-WebRequest http://127.0.0.1:5001/api/v1/model -UseBasicParsing).StatusCode` (200).
-7. **Music** → Load (warms ACE-Step 1.5 into VRAM) → add a style tag, tick **Instrumental**,
-   set duration to 0:30 → Generate (~30–90 s) → an audio player appears (save via **⬇ Save track**).
+7. **Music** → add a style tag, tick **Instrumental**, set duration to 0:30 → Generate (~30–90 s) →
+   an audio player appears (save via **⬇ Save track**).
    **Verify the track is audibly music, not near-silence** — musicgen.py auto-rerolls degenerate
    seeds, but a levels check (`ffmpeg -af volumedetect`: mean should be ≳ −25 dB) proves the chain.
-8. **Audiobook** → with Kokoro still loaded from step 4, paste two short paragraphs → Render →
-   chapter MP3 plays with natural sentence/paragraph pauses.
-9. **Video** (only if PHASE 5h was installed) → **Load video model** (claims the one-model slot and
-   frees everything else — H3 needs the VRAM *and* the system RAM) → **Text → video**, any prompt,
+8. **Audiobook** → paste two short paragraphs → Render → chapter MP3 plays with natural
+   sentence/paragraph pauses.
+8b. **Sound Effects** (if PHASE 5i was installed) → describe one event — *"a heavy iron sword drawn
+   from a leather scabbard, one continuous metallic scrape rising then leaving the throat with a
+   bright ring, close-mic, dry"* — length 4, takes 4 → Generate. Four players appear in a few
+   seconds. This is an **exclusive** job: the drawer says *freeing the GPU* first, and the slot is
+   left empty afterwards.
+8c. **Image → 3D** (if PHASE 5j was installed) → drop in a character image on a clean background,
+   leave **Remove the background first** on, Framing = *Use the whole image*, Build mesh. In under a
+   minute a rotatable mesh appears with its triangle count under it, and the `.glb` is in
+   `local-ai-studio\meshes\`.
+8d. **The queue itself** — submit four image jobs and one music job back to back without waiting.
+   The drawer should show one running and four pending, each pending row naming the model it needs
+   and how long it takes; the image jobs should be pulled **in front of** the music job while the
+   image model is resident, tagged *moved up — same model*. Then **restart the studio server
+   mid-queue**: the pending work must still be there when it comes back, and whatever was running
+   must reappear as *interrupted by a restart — re-queued*.
+9. **Video** (only if PHASE 5h was installed) → **Text → video**, any prompt,
    5 s, 16:9, leave the defaults → Generate. The stage line should walk through *loading text encoder →
    encoding prompt → loading diffusion model → sampling → decoding video → decoding audio → muxing*,
    with a real countdown once a step time is observed (the first run of any given geometry says
@@ -528,7 +667,8 @@ Then open **http://127.0.0.1:8800** and smoke-test each tab:
    observed end-to-end times of ~30 minutes for a 5 s clip on a 16 GB card are unremarkable. Let the
    tab's own measured ETA be the guide; it self-corrects from the observed seconds-per-step and caches
    the result per geometry, so the second render of the same shape reports a real countdown from the
-   start. **Play the result with sound** — H3's whole point is that
+   start. Queueing the video job is what claims the one-model slot — the queue evicts Ollama, ComfyUI
+   and koboldcpp before it starts, because H3 needs the VRAM *and* the system RAM. **Play the result with sound** — H3's whole point is that
    the audio comes out of the same pass, so a silent clip means the audio VAE is missing. The file
    lands in `local-ai-studio\videos\`.
 
@@ -1289,8 +1429,8 @@ missing"*, env #5 in PHASE 3 was not created.
 |---|---|
 | ComfyUI crashes at startup with a `UnicodeEncodeError` | Launch with `PYTHONUTF8=1` (studioctl already sets this). |
 | Image gen errors `mat1/mat2 shapes` | Text-encoder ↔ diffusion-model size mismatch (4B encoder with 9B model or vice-versa). |
-| STT returns an **empty** transcript, no error | VRAM starvation — a big model (Ollama/ComfyUI) is resident. Stop it first; the studio loads one model at a time. |
-| Language tab: "empty response (is the Language model loaded?)" | gpt-oss are **reasoning** models — the hidden reasoning can eat the whole token budget. `ask.py` defaults gpt-oss to `reasoning_effort=low` and the studio gives a larger budget; if it recurs, raise `--max-tokens` or shorten the prompt. |
+| STT returns an **empty** transcript, no error | VRAM starvation — a big model (Ollama/ComfyUI) is resident. The queue normally prevents this by swapping models itself; if it happens, something is **pinned** — unpin it on Home. |
+| Language tab returns an empty response | gpt-oss are **reasoning** models — the hidden reasoning can eat the whole token budget. `ask.py` defaults gpt-oss to `reasoning_effort=low` and the studio gives a larger budget; if it recurs, raise `--max-tokens` or shorten the prompt. |
 | Chatterbox output is garbled | Always provide a clean 5–15 s reference clip (`--ref`); reference-free is unstable. |
 | XTTS import breaks after an update | `transformers` 5.x removed `isin_mps_friendly`; pin `transformers>=4.57,<5` in the `xtts` env. |
 | Microphone blocked in the browser | Mic needs a secure context — use `http://127.0.0.1:8800` (localhost) or the Tailscale HTTPS URL. |
@@ -1300,7 +1440,7 @@ missing"*, env #5 in PHASE 3 was not created.
 | ACE-Step output is garbage with `--use-sage-attention` | Known incompatibility — never launch ComfyUI with that flag for this stack. |
 | ComfyUI logs `Failed to initialize database ... unable to open database file` at startup | Harmless for headless/API use — generation works regardless. |
 | Video renders but barely moves — a handsome, nearly static shot | Short edge below H3's native 768. This is the single most common Video-tab mistake; 480p measured 89/100 near-static frames. Use 768 and only drop lower to check composition. |
-| Video tab: "load the video model first (top of this tab)" | H3 renders only when it owns the one-model slot — click **Load video model**, which frees Ollama/ComfyUI/koboldcpp first. |
+| Video job sits in the queue saying *waiting — a model is pinned* | H3 renders only when it owns the whole card. Unpin on Home and it starts; the queue frees Ollama/ComfyUI/koboldcpp itself. |
 | Video comes out **silent** | The audio VAE is missing or misnamed — `minimax_h3_audio_vae_fp32.safetensors` must be in `models\vae\` (PHASE 5h). H3 decodes picture and sound from the same latent; there is no separate audio step to fail. |
 | Video render is far slower than ~9–10 min per 5 s clip | Either the ComfyUI venv is on cu129 (no fused `dequantize_int8_convrot` kernel — PHASE 4 installs cu130), or the machine is under 32 GB RAM and Windows is paging the offloaded half of the unet to disk. |
 | ComfyUI errors `no video in ComfyUI outputs` / accepts no prompt | H3 nodes missing → the checkout predates them (`git -C "$HOME\comfyui-src" pull`), or the H3 files in PHASE 5h were never downloaded. `VHS_LoadVideo` missing specifically means the VideoHelperSuite pack from PHASE 4 is absent. |
@@ -1311,18 +1451,20 @@ missing"*, env #5 in PHASE 3 was not created.
 # EMBEDDED SOURCE FILES
 
 Below is the complete source of every program in the stack. For each, **create the file at the exact path
-in its heading** and paste its contents verbatim (strip nothing). There are 29 files.
+in its heading** and paste its contents verbatim (strip nothing). There are 32 files.
 
-## File 1 of 29 — `%USERPROFILE%\local-ai-studio\server.py`
+## File 1 of 32 — `%USERPROFILE%\local-ai-studio\server.py`
 
 ```python
 #!/usr/bin/env python3
 """Local AI Studio — one local web app with a panel per local-model worker.
 
-Pure stdlib backend. Explicit per-worker LOAD / STOP: only one heavy model is
-resident at a time (16GB), and the user controls which. Loading a worker first
-unloads everything else. STT/TTS run as persistent subprocesses (model stays in
-VRAM between calls); Ollama uses keep_alive; ComfyUI is warmed by a 1-step gen.
+Pure stdlib backend. Only one heavy model fits at a time (16GB), so a single job
+QUEUE owns the card: every tab submits work, and one runner per lane drains it,
+loading and unloading models on the way and batching same-model jobs together.
+Pinning a model opts out of that for rapid iteration on one tab.
+STT/TTS run as persistent subprocesses (model stays in VRAM between calls);
+Ollama uses keep_alive; ComfyUI is warmed by a 1-step gen.
 
 Run:  python server.py   ->  open http://127.0.0.1:8800
 """
@@ -1356,6 +1498,7 @@ COMFY = "http://127.0.0.1:8188"
 COMFY_INPUT = os.environ.get("COMFYUI_INPUT") or os.path.join(HOME, "Documents", "ComfyUI", "input")
 TMP = os.path.join(HERE, "_tmp")
 os.makedirs(TMP, exist_ok=True)
+LOGS = os.path.join(HERE, "logs")   # same place studioctl.ps1 writes service logs
 
 
 def cleanup_edit_inputs():
@@ -1395,6 +1538,14 @@ ASK = os.path.join(SKILLS, "local-llm", "scripts", "ask.py")
 GEN = os.path.join(SKILLS, "local-image", "scripts", "gen.py")
 MUSIC = os.path.join(SKILLS, "local-music", "scripts", "musicgen.py")
 STT = os.path.join(SKILLS, "local-stt", "scripts", "transcribe.py")
+# Parakeet-TDT checkpoints. v2 is English-only; v3 covers 25 European languages with
+# automatic language ID and is faster. A/B'd here on English narration: v3 spells
+# numbers out ("forty" where v2 writes "40") and prefers commas where v2 ends the
+# sentence, so v2 stays the default for English work and v3 is one dropdown away.
+STT_MODELS = {"v2": "nvidia/parakeet-tdt-0.6b-v2", "v3": "nvidia/parakeet-tdt-0.6b-v3"}
+DEFAULT_STT = os.environ.get("PARAKEET_MODEL", "v2")
+if DEFAULT_STT not in STT_MODELS:
+    DEFAULT_STT = "v2"
 TTS = os.path.join(SKILLS, "local-tts", "scripts", "speak.py")
 VOICE = os.path.join(SKILLS, "local-tts", "scripts", "voicechange.py")
 
@@ -1408,6 +1559,12 @@ os.makedirs(VOICES, exist_ok=True)
 
 STORIES = os.path.join(HERE, "stories")    # one JSON file per Story Maker project
 os.makedirs(STORIES, exist_ok=True)
+CHATS = os.path.join(HERE, "chats")        # one JSON file per Language conversation
+os.makedirs(CHATS, exist_ok=True)
+# Turns fed back into the model as context. The file keeps every turn; only the
+# tail is re-sent, because the window is finite and the whole point of raising it
+# to 32k was long *documents*, not an unbounded transcript.
+CHAT_CONTEXT_TURNS = 6
 
 # "Unlocked" (uncensored / abliterated) text model — same gpt-oss-20b weights with
 # the refusal directions removed, so quality matches the standard model. Configurable
@@ -1482,7 +1639,6 @@ SYMPHONYGEN_DIR = os.path.join(HERE, "symphonygen")
 SPRITES = os.path.join(HERE, "sprites")
 os.makedirs(SPRITES, exist_ok=True)
 SPRITEKIT = os.path.join(HERE, "spritekit.py")
-
 # ---- Video (MiniMax H3: video WITH native stereo audio, one pass) -------------
 # h3gen.py drives ComfyUI's native H3 nodes. Two unets: fl2va (text / first-last
 # frame) and ref2va (up to 9 images + 3 videos + 3 audio clips as references).
@@ -1499,6 +1655,31 @@ SPRITEKIT = os.path.join(HERE, "spritekit.py")
 VIDEOS = os.path.join(HERE, "videos")
 os.makedirs(VIDEOS, exist_ok=True)
 H3GEN = os.path.join(HERE, "h3gen.py")
+
+# ---- Sound effects (Stable Audio 3.0 Small SFX) ------------------------------
+# The third leg of game audio: ACE-Step covers music, the TTS engines cover voice, and
+# this covers foley and ambience. Started on Stable Audio Open 1.0 and moved off it -
+# SAO is a music model doing SFX as a side job and reliably got the MATERIAL right while
+# missing the EVENT (a smashing bottle came out as tapping; a typewriter as an even
+# metronome). SA3 Small SFX is Stability's variant for this job, a third of the size,
+# and distilled to 8 steps so a take renders in about a second.
+SFXGEN = os.path.join(HERE, "sfxgen.py")
+SFX = os.path.join(HERE, "sfx")
+os.makedirs(SFX, exist_ok=True)
+
+# ---- Image -> 3D (Hunyuan3D 2.1) ---------------------------------------------
+# Geometry only; the mesh comes out untextured. Takes the same single reference image
+# Sprite Studio uses, so there is no new concept for the user to learn.
+MESH3D = os.path.join(HERE, "mesh3d.py")
+MESHES = os.path.join(HERE, "meshes")
+os.makedirs(MESHES, exist_ok=True)
+
+# ---- Speech enhancement (DeepFilterNet) --------------------------------------
+# Denoise + de-reverb for cloning reference clips, which are only ever as good as the
+# room they were recorded in. Deliberately CPU-only in its own env: it runs on 5-30s
+# clips in a few seconds, and staying off the GPU means it never evicts a resident model.
+ENHANCE = os.path.join(SKILLS, "local-tts", "scripts", "enhance_audio.py")
+ENHANCE_PY = os.path.join(ENVS, "enhance", "python.exe")
 # measured stage timings, keyed by geometry+settings, so the UI can show a real
 # ETA instead of a spinner. Written after every successful render.
 H3_ETA_CACHE = os.path.join(TMP, "h3_eta.json")
@@ -1546,25 +1727,60 @@ def llm_model_for(task: str, unlocked=False) -> str:
 NOWIN = {"creationflags": 0x08000000} if os.name == "nt" else {}   # CREATE_NO_WINDOW
 
 
+# Which child process each thread is currently blocked on. The queue uses this to
+# cancel a synchronous job (sfx, mesh3d, music, image): those handlers are one long
+# _run() call with nothing to poll, so without this a cancel could only be recorded
+# while the render carried on burning the card to produce a discarded result.
+_PROCS: dict = {}
+_PROCS_LOCK = threading.Lock()
+
+
+def _kill_tree(p) -> None:
+    """Windows: kill the WHOLE tree. A plain kill() leaves the child's conhost
+    holding the stdout pipe open, so communicate() blocks forever and the caller's
+    MGR.lock is never released (every later request then hangs on it)."""
+    try:
+        subprocess.run(["taskkill", "/T", "/F", "/PID", str(p.pid)],
+                       capture_output=True, timeout=15, **NOWIN)
+    except Exception:
+        try:
+            p.kill()
+        except Exception:
+            pass
+
+
+def kill_thread_proc(ident: int) -> bool:
+    """Kill whatever child the given runner thread is waiting on."""
+    with _PROCS_LOCK:
+        p = _PROCS.get(ident)
+    if not p or p.poll() is not None:
+        return False
+    _kill_tree(p)
+    return True
+
+
 def _run(cmd: list, timeout: int = 600):
     env = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
     p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                          text=True, encoding="utf-8", errors="replace", env=env, **NOWIN)
+    ident = threading.get_ident()
+    with _PROCS_LOCK:
+        _PROCS[ident] = p
     try:
-        out, err = p.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        # Windows: kill the WHOLE tree. subprocess.run's own kill() leaves the child's
-        # conhost holding the stdout pipe open, so communicate() blocks forever and the
-        # caller's MGR.lock is never released (every later request then hangs on it).
-        subprocess.run(["taskkill", "/T", "/F", "/PID", str(p.pid)],
-                       capture_output=True, timeout=15, **NOWIN)
         try:
-            out, err = p.communicate(timeout=10)
-        except Exception:
-            out, err = "", ""
-        err = (err or "") + f"\n[timed out after {timeout}s — process tree killed]"
-        return 1, (out or "").strip(), err.strip()
-    return p.returncode, (out or "").strip(), (err or "").strip()
+            out, err = p.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            _kill_tree(p)
+            try:
+                out, err = p.communicate(timeout=10)
+            except Exception:
+                out, err = "", ""
+            err = (err or "") + f"\n[timed out after {timeout}s — process tree killed]"
+            return 1, (out or "").strip(), err.strip()
+        return p.returncode, (out or "").strip(), (err or "").strip()
+    finally:
+        with _PROCS_LOCK:
+            _PROCS.pop(ident, None)
 
 
 _COMPONENTS_CACHE = {"t": 0.0, "data": None}
@@ -1595,6 +1811,8 @@ def installed_components():
     flux  = model("diffusion_models", "flux-2-klein-base-4b-fp8.safetensors")
     ace   = model("diffusion_models", "acestep_v1.5_xl_turbo_bf16.safetensors")
     h3    = model("diffusion_models", "minimax_h3_fl2va_pruned_int8_convrot.safetensors")
+    sfx   = model("checkpoints", "stable_audio_3_small_sfx.safetensors")         and model("text_encoders", "t5gemma_b_b_ul2.safetensors")
+    mesh  = model("checkpoints", "hunyuan_3d_v2.1.safetensors")
     lulla = os.path.isfile(LULLABY_PY)
     tts   = env("kokoro") or env("chatterbox")
 
@@ -1618,6 +1836,8 @@ def installed_components():
         "edit":        flux,
         "sprite":      flux,
         "video":       h3,
+        "sfx":         sfx,
+        "mesh3d":      mesh,
         "music":       ace,
         # Orchestrate needs SymphonyGen; Arrange needs an LLM to plan. Either is enough.
         "composer":    os.path.isdir(SYMPHONYGEN_DIR) or os.path.isfile(SYMPHGEN_PY) or has_llm,
@@ -1677,6 +1897,164 @@ def comfy_free():
         time.sleep(1.5)
     except Exception:
         pass
+
+
+# ---- stopping our own ComfyUI work on cancel --------------------------------
+# Killing a client script (h3gen, gen.py, musicgen, sfxgen, mesh3d) does not stop
+# ComfyUI: the prompt it already submitted renders to the end and holds the card
+# while the queue moves on to the next job. Every child inherits this tag and
+# prefixes its client_id with it, so a cancel can find exactly the studio's prompts
+# and stop them — never one that something else driving the same ComfyUI queued.
+COMFY_TAG = "studio-"
+os.environ["STUDIO_COMFY_TAG"] = COMFY_TAG
+
+
+def comfy_cancel_ours() -> int:
+    """Drop the studio's pending ComfyUI prompts and interrupt its running one.
+    Call it AFTER the client script is dead, or the script can queue another."""
+    def post(path, body):
+        req = urllib.request.Request(f"{COMFY}{path}", method="POST",
+                                     data=json.dumps(body).encode(),
+                                     headers={"Content-Type": "application/json"})
+        urllib.request.urlopen(req, timeout=10).read()
+
+    try:
+        q = json.loads(urllib.request.urlopen(f"{COMFY}/queue", timeout=5).read())
+    except Exception:
+        return 0                       # ComfyUI not running — nothing to stop
+
+    def ours(items):                   # item = [number, prompt_id, prompt, extra_data, outputs]
+        return [it[1] for it in items or []
+                if len(it) > 3 and isinstance(it[3], dict)
+                and str(it[3].get("client_id", "")).startswith(COMFY_TAG)]
+
+    pending, running = ours(q.get("queue_pending")), ours(q.get("queue_running"))
+    try:
+        if pending:
+            post("/queue", {"delete": pending})
+        for pid in running:            # targeted: a no-op if pid is no longer the one running
+            post("/interrupt", {"prompt_id": pid})
+    except Exception as ex:
+        print(f"[queue] could not stop ComfyUI prompts: {ex}", flush=True)
+    if pending or running:
+        print(f"[queue] cancel stopped {len(running)} running / {len(pending)} pending "
+              f"ComfyUI prompt(s)", flush=True)
+    return len(pending) + len(running)
+
+
+# ---- reclaiming ComfyUI's host RAM ------------------------------------------
+# ComfyUI keeps a CPU-side copy of every model it has loaded ("smart memory") so it
+# can push weights back to VRAM without re-reading them from disk. POST /free gives
+# back VRAM but deliberately KEEPS that RAM copy: measured here, ComfyUI sat on
+# 21GB of system RAM after a run of image and video jobs, and /free moved it not at
+# all. A 20B language model then has nowhere to load and Ollama answers HTTP 500.
+#
+# Restarting ComfyUI is the only thing that returns that memory. So rather than
+# launch it with --disable-smart-memory (which would make every image job reload
+# its weights from disk), the queue reclaims on demand: only when it is about to
+# load a model that lives OUTSIDE ComfyUI and system RAM is short.
+COMFY_RAM_GUARD = float(os.environ.get("COMFY_RAM_GUARD", "12"))   # GB
+COMFY_SRC = os.path.dirname(os.path.dirname(os.path.dirname(COMFY_PY)))
+# Workers whose weights load into system RAM outside ComfyUI, so they lose the race
+# against its cache. (image/music/video are ComfyUI's own and must not trigger this.)
+RAM_HUNGRY = ("llm", "story", "stt", "tts", "voice", "voicemodel")
+
+
+def free_ram_gb() -> float:
+    """Free physical memory, in GB. 0.0 if it cannot be read (never blocks a load)."""
+    try:
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             "(Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory"],
+            capture_output=True, text=True, timeout=12, **NOWIN).stdout
+        return int(re.search(r"(\d+)", out).group(1)) / 1048576.0
+    except Exception:
+        return 0.0
+
+
+def _comfy_procs() -> list:
+    """Every python process running ComfyUI's main.py on our port: (pid, cmdline)."""
+    port = COMFY.rsplit(":", 1)[-1]
+    ps = ("Get-CimInstance Win32_Process -Filter \"Name like 'python%'\" | "
+          "Where-Object { $_.CommandLine -like '*main.py*--port*" + port + "*' } | "
+          "Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress")
+    try:
+        out = subprocess.run(["powershell", "-NoProfile", "-Command", ps],
+                             capture_output=True, text=True, timeout=25, **NOWIN).stdout.strip()
+        if not out:
+            return []
+        d = json.loads(out)
+        if isinstance(d, dict):
+            d = [d]
+        return [(int(x["ProcessId"]), x.get("CommandLine") or "") for x in d]
+    except Exception:
+        return []
+
+
+def _comfy_up(timeout: float) -> bool:
+    end = time.time() + timeout
+    while time.time() < end:
+        try:
+            urllib.request.urlopen(f"{COMFY}/system_stats", timeout=5).read()
+            return True
+        except Exception:
+            time.sleep(2)
+    return False
+
+
+def _split_cmd(cmdline: str) -> list:
+    """Split a Windows command line back into argv, honouring quoted paths."""
+    return [a for a in re.findall(r'"([^"]*)"|(\S+)', cmdline) for a in [a[0] or a[1]] if a]
+
+
+def comfy_reclaim(force: bool = False) -> dict:
+    """Restart ComfyUI so it gives its cached weights back to system RAM.
+
+    Returns what actually happened, in GB, so the caller can report it honestly
+    rather than claiming a win it did not measure."""
+    before = free_ram_gb()
+    procs = _comfy_procs()
+    if not procs:
+        return {"ok": False, "reason": "ComfyUI is not running", "free_gb": round(before, 1)}
+    argv, cwd = None, COMFY_SRC
+    for _pid, cmd in procs:
+        parts = _split_cmd(cmd)
+        if len(parts) >= 2 and parts[1].endswith("main.py"):
+            argv = parts
+            break
+    if not argv:
+        return {"ok": False, "reason": "could not read how ComfyUI was started",
+                "free_gb": round(before, 1)}
+    comfy_free()                       # drop VRAM first so the exit is clean
+    for pid, _cmd in procs:
+        try:
+            subprocess.run(["taskkill", "/T", "/F", "/PID", str(pid)],
+                           capture_output=True, timeout=20, **NOWIN)
+        except Exception:
+            pass
+    time.sleep(2.0)
+    t0 = time.time()
+    # PYTHONUTF8 is not optional: ComfyUI's startup banner contains emoji and the
+    # process dies on the first print under Windows' cp1252 default. studioctl.ps1
+    # sets it for exactly this reason. Logs go where studioctl puts them, so a
+    # failed restart is diagnosable instead of silent.
+    env = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
+    try:
+        os.makedirs(LOGS, exist_ok=True)
+        out = open(os.path.join(LOGS, "comfyui.out.log"), "a", encoding="utf-8")
+        err = open(os.path.join(LOGS, "comfyui.err.log"), "a", encoding="utf-8")
+        subprocess.Popen(argv, cwd=(cwd if os.path.isdir(cwd) else None),
+                         stdout=out, stderr=err, env=env, **NOWIN)
+    except Exception as e:
+        return {"ok": False, "reason": f"could not restart ComfyUI: {e}",
+                "free_gb": round(free_ram_gb(), 1)}
+    up = _comfy_up(240)
+    after = free_ram_gb()
+    return {"ok": up, "free_gb": round(after, 1), "before_gb": round(before, 1),
+            "reclaimed_gb": round(max(0.0, after - before), 1),
+            "seconds": round(time.time() - t0, 1),
+            "reason": "" if up else ("ComfyUI did not come back in 4 minutes - "
+                                     "see logs\\comfyui.err.log")}
 
 
 def comfy_warmup(model: str):
@@ -1838,14 +2216,58 @@ class Worker:
 
 
 # ---- load/stop manager (one heavy model resident at a time) -----------------
+def _model_key_for(worker: str, params: dict) -> str:
+    """The key Manager.load() will end up holding for this worker+params.
+
+    Pure, and deliberately the ONLY place that mapping is written down: the queue
+    has to know which model a pending job needs before running it, and the pin has
+    to know whether the wanted model is already resident. Keep in step with load()."""
+    p = params or {}
+    if worker == "llm":
+        return "llm:" + llm_model_for(p.get("task", "code"), p.get("unlocked"))
+    if worker == "image":
+        return "image:" + p.get("model", "base4b")
+    if worker == "stt":
+        v = p.get("variant", DEFAULT_STT)
+        return "stt:" + (v if v in STT_MODELS else DEFAULT_STT)
+    if worker == "tts":
+        return "tts:" + p.get("engine", "kokoro")
+    if worker == "voicemodel":
+        return "voicemodel:" + (p.get("name") or "")
+    if worker in ("voice", "music", "video"):
+        return worker
+    if worker == "story":
+        return f"story:{STORY_MODEL_LABEL}"
+    raise RuntimeError(f"unknown worker {worker}")
+
+
 class Manager:
     def __init__(self):
         self.lock = threading.RLock()
         self.key = None          # e.g. "llm:gpt-oss:20b", "image:base4b", "stt", "tts:kokoro"
         self.workers = {}        # "stt"|"tts" -> Worker
+        # Pin: the escape hatch out of queue scheduling. While a key is pinned the
+        # queue runner will not unload it, so rapid-fire iteration on one tab does
+        # not pay a load/unload cycle per job. Queued work needing a different model
+        # waits (state "pending", blocked="pin") rather than evicting it.
+        self.pinned = None
 
     def status(self):
-        return {"key": self.key}
+        return {"key": self.key, "pinned": self.pinned}
+
+    def pin(self, worker: str, params: dict):
+        with self.lock:
+            key = self.key
+            want = _model_key_for(worker, params)
+            if key != want:
+                key = self.load(worker, params)["key"]
+            self.pinned = key
+            return self.status()
+
+    def unpin(self):
+        with self.lock:
+            self.pinned = None
+            return self.status()
 
     def _unload_all(self):
         was_image = (self.key or "").startswith("image:")
@@ -1862,11 +2284,27 @@ class Manager:
             cleanup_music_inputs()  # uploaded remix sources deleted when music model stops
         self.key = None
 
+    def claim_gpu(self):
+        """Evict every resident model so a one-shot ComfyUI job gets the whole card.
+
+        For the transient jobs (sfx, mesh) there is nothing to keep resident
+        afterwards - they load, run and exit - so unlike load() this leaves the slot
+        empty rather than claiming it. SeedVR2 at 1080p measured 15.9GB on its own, so
+        this is not optional politeness. Callers must already hold self.lock."""
+        self._unload_all()
+
     def load(self, worker: str, params: dict):
         with self.lock:
             if TRAINJOB.state in ("preparing", "training"):
                 raise RuntimeError("a voice is training — wait for it to finish")
             self._unload_all()
+            # ComfyUI does not hand its cached weights back on unload, so a model
+            # that loads outside it can find the RAM already spoken for. Reclaim
+            # first, and only when it is actually tight - a restart costs ~20s.
+            if worker in RAM_HUNGRY:
+                free = free_ram_gb()
+                if free and free < COMFY_RAM_GUARD:
+                    comfy_reclaim()
             try:
                 if worker == "llm":
                     model = llm_model_for(params.get("task", "code"), params.get("unlocked"))
@@ -1877,8 +2315,12 @@ class Manager:
                     comfy_warmup(model)
                     self.key = f"image:{model}"
                 elif worker == "stt":
-                    self.workers["stt"] = Worker(ENV_PY["nemo-asr"], STT, [])
-                    self.key = "stt"
+                    variant = params.get("variant", DEFAULT_STT)
+                    if variant not in STT_MODELS:
+                        variant = DEFAULT_STT
+                    self.workers["stt"] = Worker(ENV_PY["nemo-asr"], STT,
+                                                 ["--model", STT_MODELS[variant]])
+                    self.key = f"stt:{variant}"
                 elif worker == "tts":
                     engine = params.get("engine", "kokoro")
                     if engine == "zonos":
@@ -1922,10 +2364,583 @@ class Manager:
     def stop(self):
         with self.lock:
             self._unload_all()
+            self.pinned = None   # an explicit Stop releases the pin too
             return self.status()
 
 
 MGR = Manager()
+
+
+# ---- measured timings (shared cache-aware ETA store) -------------------------
+# Same contract as the H3 ETA cache (_h3_eta_save): timings only transfer between
+# runs that do the same amount of work, so the key carries everything that drives
+# cost, and a new measurement is blended 60/40 with history so one cold run cannot
+# permanently poison the estimate. A key that has never run has no entry, and the
+# UI must then say "measuring…" rather than invent a percentage.
+TIMINGS_FILE = os.path.join(TMP, "job_timings.json")
+_TIMINGS_LOCK = threading.Lock()
+
+
+def _timing_all() -> dict:
+    try:
+        with open(TIMINGS_FILE, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _timing_get(bucket: str, key: str):
+    return (_timing_all().get(bucket) or {}).get(key)
+
+
+def _timing_save(bucket: str, key: str, seconds: float):
+    if not key or seconds <= 0:
+        return
+    with _TIMINGS_LOCK:
+        d = _timing_all()
+        b = d.setdefault(bucket, {})
+        old = b.get(key)
+        b[key] = round(seconds if old is None else 0.6 * old + 0.4 * seconds, 2)
+        try:
+            _atomic_write(TIMINGS_FILE, json.dumps(d, indent=1))
+        except Exception:
+            pass
+
+
+def _cost_key(kind: str, cost: dict) -> str:
+    return kind + "|" + "|".join(f"{k}={cost[k]}" for k in sorted(cost or {}))
+
+
+# ---- job queue ---------------------------------------------------------------
+QUEUE_FILE = os.path.join(TMP, "queue.json")
+QUEUE_STAGE = os.path.join(TMP, "queue")
+# How many times a waiting job may be jumped by same-model coalescing before it
+# becomes un-jumpable. Without this a continuously-fed image queue strands the one
+# video job forever.
+QUEUE_MAX_SKIP = 6
+# Finished entries kept for the panel's history (and across restarts).
+QUEUE_KEEP_DONE = 40
+
+
+class Cancelled(Exception):
+    pass
+
+
+class Kind:
+    """One queueable job type.
+
+    model(params)  -> None, or (key, worker, load_params) naming the model the runner
+                      must have resident before run() is called.
+    validate(params) -> params, run inside the HTTP request. Raises immediately on bad
+                      input and stages uploads to disk, so a typo surfaces at submit
+                      time instead of forty minutes later.
+    run(entry)     -> result dict, run on the lane's runner thread.
+    cost(params)   -> the dict that keys this job's measured duration.
+    """
+
+    def __init__(self, lane, model, run, label, validate=None, cost=None,
+                 priority=False, exclusive=False, component=None):
+        self.lane = lane
+        self.model = model
+        self.run = run
+        self.label = label
+        self.validate = validate or (lambda p, stage: p)
+        self.cost = cost or (lambda p: {})
+        self.priority = priority
+        # exclusive: the job claims the whole GPU itself (claim_gpu), so it may not
+        # run while a model is pinned and it leaves the slot empty afterwards.
+        self.exclusive = exclusive
+        self.component = component
+
+
+JOB_TYPES: dict = {}   # filled in below, next to POST_ROUTES
+
+
+class Stager:
+    """Uploads are written to disk at submit time so the queue file holds paths,
+    not multi-MB base64. The folder dies with the job."""
+
+    def __init__(self):
+        self.dir = os.path.join(QUEUE_STAGE, uuid.uuid4().hex[:12])
+        self.used = False
+        self.n = 0
+
+    def save(self, data_url: str, ext: str = ".png") -> str:
+        os.makedirs(self.dir, exist_ok=True)
+        self.used = True
+        self.n += 1
+        return _b64_write(data_url, os.path.join(self.dir, f"in{self.n}{ext}"))
+
+    def drop(self):
+        if self.used:
+            shutil.rmtree(self.dir, ignore_errors=True)
+
+
+class QEntry:
+    def __init__(self, kind: str, params: dict, priority: bool = False):
+        k = JOB_TYPES[kind]
+        self.id = uuid.uuid4().hex[:12]
+        self.kind = kind
+        self.params = params
+        self.lane = k.lane
+        self.priority = bool(priority or k.priority)
+        # exclusive may depend on the params (Composer only claims the whole card
+        # when it hands off to SymphonyGen), so resolve it per entry.
+        self.exclusive = bool(k.exclusive(params) if callable(k.exclusive) else k.exclusive)
+        self.label = k.label(params)
+        m = k.model(params)
+        self.model_key, self.model_worker, self.model_params = m if m else (None, None, None)
+        self.cost_key = _cost_key(kind, k.cost(params))
+        self.state = "pending"      # pending | running | done | error | cancelled
+        self.step = 0
+        self.total = 0
+        self.stage = ""
+        self.current = ""
+        self.message = ""
+        self.eta = None
+        self.elapsed = 0.0
+        self.files = []
+        self.result = None          # in-memory only — never persisted (image results
+                                    # are multi-MB data URLs and stay RAM-only)
+        self.skipped = 0
+        self.hoisted = False
+        self.blocked = ""
+        self.resumed = False
+        self.cancelling = False
+        self.created = time.time()
+        self.t0 = None
+        self.t_end = None
+        self.stage_dir = None
+        self.thread = None          # runner thread ident, so cancel can kill its child
+        self.done_evt = threading.Event()
+
+    # -- estimates ---------------------------------------------------------
+    def estimate(self):
+        """Measured total for this exact shape of work, or None if never run."""
+        return _timing_get("job", self.cost_key)
+
+    def load_cost(self):
+        if not self.model_key:
+            return 0.0
+        return _timing_get("load", self.model_key) or 0.0
+
+    def remaining(self):
+        """Seconds left. Prefers a live ETA mirrored from the underlying job."""
+        if self.state != "running":
+            return self.estimate()
+        if self.eta is not None:
+            return self.eta
+        est = self.estimate()
+        if est is None:
+            return None
+        return max(0.0, est - self.elapsed)
+
+    # -- state -------------------------------------------------------------
+    def mirror(self, s: dict):
+        """Copy a singleton job's status onto this entry, so one /api/queue poll
+        carries the progress the per-tab pollers used to fetch separately."""
+        for f in ("step", "total", "stage", "current", "message"):
+            if s.get(f) is not None:
+                setattr(self, f, s[f])
+        if s.get("epoch") is not None:      # TrainJob counts epochs, not steps
+            self.step = s["epoch"]
+        if s.get("files"):
+            self.files = s["files"]
+        if "eta" in s:
+            self.eta = s["eta"]
+
+    def public(self) -> dict:
+        if self.state == "running" and self.t0:
+            self.elapsed = round(time.time() - self.t0, 1)
+        r = self.remaining()
+        return {"id": self.id, "kind": self.kind, "label": self.label,
+                "lane": self.lane, "state": self.state, "priority": self.priority,
+                "model": self.model_key, "step": self.step, "total": self.total,
+                "stage": self.stage, "current": self.current, "message": self.message,
+                "eta": (round(r) if r is not None else None),
+                "elapsed": round(self.elapsed, 1), "files": self.files,
+                "hoisted": self.hoisted, "blocked": self.blocked,
+                "resumed": self.resumed, "created": self.created,
+                "has_result": self.result is not None}
+
+    def persist(self) -> dict:
+        """What survives a restart. No result payloads, no base64 — uploads were
+        staged to disk at submit time and the params carry paths only."""
+        # Interactive jobs carry raw uploads (a vision image, a clip to transcribe)
+        # and restore() drops them anyway — the browser call waiting on one is long
+        # gone — so their payload never reaches disk.
+        return {"id": self.id, "kind": self.kind,
+                "params": ({} if self.priority else self.params),
+                "priority": self.priority, "state": self.state,
+                "message": self.message, "files": self.files,
+                "created": self.created, "stage_dir": self.stage_dir,
+                "elapsed": self.elapsed}
+
+
+class JobQueue:
+    """One ordered list, one runner per lane.
+
+    The runner is what makes the eight singleton job classes safe to line up: they
+    each reject a second concurrent start, and a single-threaded runner means that
+    can never happen. Their progress, ETA, cancel and error handling stay theirs.
+    """
+
+    def __init__(self):
+        self.cv = threading.Condition(threading.RLock())
+        self.entries = []
+        self.running = {}       # lane -> entry
+
+    # -- submit / mutate ---------------------------------------------------
+    def add(self, kind: str, params: dict, priority: bool = False) -> QEntry:
+        if kind not in JOB_TYPES:
+            raise RuntimeError(f"unknown job type {kind!r}")
+        k = JOB_TYPES[kind]
+        if k.component and not installed_components().get(k.component):
+            raise RuntimeError(f"{kind}: that model isn't installed (see Studio Setup)")
+        stage = Stager()
+        try:
+            params = k.validate(dict(params or {}), stage)
+        except Exception:
+            stage.drop()
+            raise
+        e = QEntry(kind, params, priority)
+        e.stage_dir = stage.dir if stage.used else None
+        with self.cv:
+            self.entries.append(e)
+            self._persist()
+            self.cv.notify_all()
+        return e
+
+    def get(self, jid: str):
+        with self.cv:
+            for e in self.entries:
+                if e.id == jid:
+                    return e
+        return None
+
+    def cancel(self, jid: str) -> dict:
+        with self.cv:
+            e = self.get(jid)
+            if not e:
+                raise RuntimeError("no such job")
+            if e.state == "pending":
+                e.state = "cancelled"
+                e.message = "cancelled before it started"
+                e.done_evt.set()
+                self._drop_stage(e)
+            elif e.state == "running":
+                e.cancelling = True
+                e.current = "cancelling…"
+                # Async singletons (video, sprite, composer) kill their own
+                # child from drive_singleton; a synchronous handler has no such
+                # hook, so reach its subprocess directly — then stop whatever it
+                # had already handed to ComfyUI (off-thread: we hold the lock).
+                if e.thread and kill_thread_proc(e.thread):
+                    threading.Thread(target=comfy_cancel_ours, daemon=True).start()
+            self._persist()
+            self.cv.notify_all()
+            return e.public()
+
+    def move(self, jid: str, to: int) -> dict:
+        with self.cv:
+            pend = [e for e in self.entries if e.state == "pending"]
+            e = self.get(jid)
+            if not e or e.state != "pending":
+                raise RuntimeError("only a pending job can be reordered")
+            to = max(0, min(len(pend) - 1, int(to)))
+            pend.remove(e)
+            pend.insert(to, e)
+            # A hand reorder is an explicit instruction — protect it from coalescing.
+            e.skipped = QUEUE_MAX_SKIP
+            rest = [x for x in self.entries if x.state != "pending"]
+            self.entries = rest + pend
+            self._persist()
+            self.cv.notify_all()
+            return self.snapshot()
+
+    def clear(self, what: str = "finished") -> dict:
+        with self.cv:
+            for e in list(self.entries):
+                if what == "pending" and e.state == "pending":
+                    e.state = "cancelled"
+                    e.done_evt.set()
+                    self._drop_stage(e)
+                    self.entries.remove(e)
+                elif what == "finished" and e.state in ("done", "error", "cancelled"):
+                    self._drop_stage(e)
+                    self.entries.remove(e)
+            self._persist()
+            return self.snapshot()
+
+    # -- read --------------------------------------------------------------
+    def snapshot(self) -> dict:
+        with self.cv:
+            items = [e.public() for e in self.entries]
+            # Queue ETA: what is left on the running jobs, plus every pending job's
+            # measured estimate, plus a model load wherever the key changes. None as
+            # soon as any leg has never been measured — a partial total is a lie.
+            total, unknown = 0.0, False
+            key = MGR.key
+            for e in self.entries:
+                if e.state == "running":
+                    r = e.remaining()
+                elif e.state == "pending":
+                    r = e.estimate()
+                    if e.model_key and e.model_key != key:
+                        total += e.load_cost()
+                        key = e.model_key
+                else:
+                    continue
+                if r is None:
+                    unknown = True
+                else:
+                    total += r
+            return {"jobs": items, "resident": MGR.key, "pinned": MGR.pinned,
+                    "eta": (None if unknown else round(total)),
+                    "running": [e.id for e in self.running.values() if e]}
+
+    # -- scheduling --------------------------------------------------------
+    def _blocked(self, e: QEntry) -> bool:
+        """A pinned model outranks the queue: anything that would evict it waits."""
+        if e.lane == "gpu" and MGR.pinned:
+            if e.exclusive or (e.model_key and e.model_key != MGR.pinned):
+                e.blocked = "pin"
+                return True
+        e.blocked = ""
+        return False
+
+    def _pick(self, lane: str):
+        cands = [e for e in self.entries if e.lane == lane and e.state == "pending"]
+        if not cands:
+            return None
+        for e in [x for x in cands if x.priority]:
+            if not self._blocked(e):
+                return e
+        plain = [e for e in cands if not e.priority]
+        if not plain:
+            return None
+        head = plain[0]
+        if self._blocked(head):
+            for e in plain[1:]:
+                if not self._blocked(e):
+                    return e
+            return None
+        # Coalesce: a load costs 20s-3min, so pull forward a job that wants the model
+        # already resident rather than paying an unload/load cycle to keep strict FIFO.
+        if lane == "gpu" and MGR.key and head.model_key != MGR.key \
+                and head.skipped < QUEUE_MAX_SKIP:
+            for i, e in enumerate(plain[1:], 1):
+                if e.model_key == MGR.key and not self._blocked(e):
+                    e.hoisted = True
+                    for j in plain[:i]:
+                        j.skipped += 1
+                    return e
+        return head
+
+    def take(self, lane: str) -> QEntry:
+        with self.cv:
+            while True:
+                e = self._pick(lane)
+                if e is not None:
+                    e.state = "running"
+                    e.t0 = time.time()
+                    e.current = "starting…"
+                    self.running[lane] = e
+                    self._persist()
+                    return e
+                # Timed wait so a pin release re-evaluates blocked entries even
+                # though unpin happens outside this lock.
+                self.cv.wait(2.0)
+
+    def finish(self, e: QEntry, state: str, message: str = ""):
+        with self.cv:
+            e.state = state
+            e.t_end = time.time()
+            if e.t0:
+                e.elapsed = round(e.t_end - e.t0, 1)
+            if message:
+                e.message = message
+            if state == "done" and e.t0:
+                _timing_save("job", e.cost_key, e.t_end - e.t0)
+                e.eta = 0
+            else:
+                e.eta = None
+            self.running[e.lane] = None
+            self._drop_stage(e)
+            self._trim()
+            self._persist()
+            e.done_evt.set()
+            self.cv.notify_all()
+
+    # -- housekeeping ------------------------------------------------------
+    def _drop_stage(self, e: QEntry):
+        if e.stage_dir and os.path.isdir(e.stage_dir):
+            try:
+                shutil.rmtree(e.stage_dir, ignore_errors=True)
+            except Exception:
+                pass
+        e.stage_dir = None
+
+    def _trim(self):
+        done = [e for e in self.entries if e.state in ("done", "error", "cancelled")]
+        for e in done[:-QUEUE_KEEP_DONE] if len(done) > QUEUE_KEEP_DONE else []:
+            self.entries.remove(e)
+
+    def _persist(self):
+        try:
+            _atomic_write(QUEUE_FILE, json.dumps(
+                {"entries": [e.persist() for e in self.entries]}, indent=1))
+        except Exception:
+            pass
+
+    def restore(self):
+        """Bring back the queue after a restart. Anything that was mid-flight is
+        re-queued (its output is at best half written), priority work is dropped —
+        the browser call that was waiting on it is long gone."""
+        try:
+            with open(QUEUE_FILE, encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            return
+        for d in data.get("entries") or []:
+            try:
+                if d.get("priority"):
+                    continue
+                if d.get("kind") not in JOB_TYPES:
+                    continue
+                e = QEntry(d["kind"], d.get("params") or {}, False)
+                e.id = d.get("id") or e.id
+                e.created = d.get("created") or e.created
+                e.stage_dir = d.get("stage_dir")
+                st = d.get("state")
+                if st == "running":
+                    e.state, e.resumed = "pending", True
+                    e.message = "interrupted by a restart — re-queued"
+                elif st in ("done", "error", "cancelled"):
+                    e.state = st
+                    e.message = d.get("message") or ""
+                    e.files = d.get("files") or []
+                    e.elapsed = d.get("elapsed") or 0.0
+                    e.done_evt.set()
+                else:
+                    e.state = "pending"
+                self.entries.append(e)
+            except Exception:
+                continue
+        self._persist()
+
+
+QUEUE = JobQueue()
+
+
+class Runner(threading.Thread):
+    """One per lane. The gpu lane is the only thing that loads and unloads models;
+    the cpu lane exists so CPU-only work (speech enhance, the FluidSynth render)
+    keeps running alongside GPU jobs the way it does today."""
+
+    def __init__(self, lane: str):
+        super().__init__(daemon=True, name=f"runner-{lane}")
+        self.lane = lane
+
+    def run(self):
+        while True:
+            e = QUEUE.take(self.lane)
+            try:
+                self._exec(e)
+            except Exception as ex:      # never let a runner thread die
+                try:
+                    QUEUE.finish(e, "error", str(ex)[:400])
+                except Exception:
+                    pass
+
+    def _exec(self, e: QEntry):
+        k = JOB_TYPES[e.kind]
+        try:
+            e.thread = threading.get_ident()
+            if e.cancelling:
+                raise Cancelled()
+            if e.exclusive:
+                # Track Splitter, Lullaby, SFX, mesh3d and voice training all want the
+                # whole card and refuse to start with anything resident. The queue is
+                # what frees it now, instead of the user being told to press Stop.
+                if MGR.key:
+                    e.stage = e.current = "freeing the GPU"
+                    MGR.stop()
+            elif e.model_key and MGR.key != e.model_key:
+                # Say so if this load is about to restart ComfyUI to get its RAM
+                # back - otherwise it looks like a 30s stall on "loading".
+                _low = (e.model_worker in RAM_HUNGRY
+                        and 0 < free_ram_gb() < COMFY_RAM_GUARD)
+                e.stage = e.current = (
+                    f"reclaiming RAM from ComfyUI, then loading {e.model_key}"
+                    if _low else f"loading {e.model_key}")
+                t = time.time()
+                try:
+                    MGR.load(e.model_worker, e.model_params)
+                except Exception as ex:
+                    raise RuntimeError(_load_hint(e.model_key, ex)) from None
+                _timing_save("load", e.model_key, time.time() - t)
+            e.stage = e.current = "running"
+            res = k.run(e)
+            if e.cancelling:
+                raise Cancelled()
+            e.result = res
+            if isinstance(res, dict) and res.get("files"):
+                e.files = res["files"]
+            QUEUE.finish(e, "done", (res or {}).get("message") or "done")
+        except Cancelled:
+            QUEUE.finish(e, "cancelled", "cancelled")
+        except Exception as ex:
+            QUEUE.finish(e, "error", str(ex)[:400])
+
+
+#: TrainJob reports preparing/training rather than running; everything else uses
+#: "running". Anything not in here means the job has settled.
+_RUNNING_STATES = ("running", "preparing", "training")
+
+
+def _load_hint(key: str, err: Exception) -> str:
+    """Turn a bare load failure into something actionable.
+
+    ComfyUI keeps its weights in HOST ram and does not give them back on /free, so
+    after image or video work a 20B language model can fail to load with nothing
+    obviously wrong. Say that, rather than surfacing 'HTTP Error 500'."""
+    msg = str(err)
+    low = msg.lower()
+    if "memory" in low or "500" in low or "resource" in low:
+        free = free_ram_gb()
+        extra = f" Only {free:.1f} GB of system RAM is free." if free else ""
+        return (f"could not load {key}: {msg}.{extra} ComfyUI holds its weights in "
+                f"system RAM and does not give them back on unload - use "
+                f"Reclaim RAM on the Home tab (it restarts ComfyUI, ~20s).")
+    return f"could not load {key}: {msg}"
+
+
+def drive_singleton(job, e: QEntry, start=None, poll: float = 0.5) -> dict:
+    """Run one of the existing async job classes to completion under the queue.
+
+    The job class keeps its own progress parsing, measured ETA, cancel flag and
+    error handling; this only starts it, mirrors its status onto the queue entry
+    and forwards a cancel. Because the runner is single-threaded, the "already
+    running" rejection inside each start() is now unreachable."""
+    (start or job.start)(e.params)
+    while True:
+        s = job.status()
+        e.mirror(s)
+        if s.get("state") not in _RUNNING_STATES:
+            break
+        if e.cancelling:
+            c = getattr(job, "cancel", None)
+            if c:
+                c()
+        time.sleep(poll)
+    st = s.get("state")
+    if st == "cancelled":
+        raise Cancelled()
+    if st == "error":
+        raise RuntimeError(s.get("message") or "job failed")
+    return {"files": s.get("files") or [], "name": s.get("name"),
+            "message": s.get("message") or "done"}
 
 
 # ---- saved voice-model library ----------------------------------------------
@@ -1957,7 +2972,8 @@ def delete_voice(name: str):
 def oneshot_stt(audio_b64: str) -> str:
     """Transcribe audio with a transient Parakeet run (small; coexists with XTTS)."""
     apath = _write_wav(audio_b64, "vm_stt_in.wav")
-    rc, out, err = _run([ENV_PY["nemo-asr"], STT, apath], timeout=300)
+    rc, out, err = _run([ENV_PY["nemo-asr"], STT, apath,
+                         "--model", STT_MODELS[DEFAULT_STT]], timeout=300)
     text = (out.splitlines() or [""])[-1].strip() if out else ""
     if not text:
         raise RuntimeError("could not transcribe the audio")
@@ -2082,7 +3098,8 @@ def current_llm_model():
 def llm_raw(prompt: str, *, task: str = "research", max_tokens: int = 800,
             system: str = None, temperature: float = None, image_path: str = None,
             timeout: int = 300, model: str = None, top_p: float = None,
-            frequency_penalty: float = None, presence_penalty: float = None) -> str:
+            frequency_penalty: float = None, presence_penalty: float = None,
+            reasoning: str = None) -> str:
     """One-shot local-LLM call via ask.py. Shared by the Language tab and the
     Story Maker orchestrator. The Manager lock is the caller's responsibility for
     multi-step jobs; single calls take it here. `model` overrides the tag (used to
@@ -2101,6 +3118,8 @@ def llm_raw(prompt: str, *, task: str = "research", max_tokens: int = 800,
         cmd += ["--frequency-penalty", str(frequency_penalty)]
     if presence_penalty is not None:
         cmd += ["--presence-penalty", str(presence_penalty)]
+    if reasoning:
+        cmd += ["--reasoning-effort", reasoning]
     if image_path:
         cmd += ["--image", image_path]
     cmd.append(prompt or "Describe this.")
@@ -2110,7 +3129,25 @@ def llm_raw(prompt: str, *, task: str = "research", max_tokens: int = 800,
     return out
 
 
-def do_llm(task: str, prompt: str, image_b64, unlocked=False) -> str:
+# How hard gpt-oss should think, per Language-tab task. Deeper reasoning costs tokens
+# from the same budget as the answer, so these are paired with the max_tokens below and
+# with the 32k context studioctl now starts Ollama with - at the old 4096-token default
+# anything above "low" would have spent the window thinking and returned nothing.
+# Vision is left shallow on purpose: qwen3-vl is not a reasoning model, and describing
+# an image does not improve with a longer chain of thought.
+REASONING_FOR_TASK = {"code": "high", "research": "high", "vision": "low"}
+
+# Sampling temperature per task. OpenAI ship gpt-oss with a recommendation of 1.0, and
+# measured here that is not a style preference but a reliability one: on a hard prompt at
+# reasoning=high, temperature 0.2 returned an EMPTY answer 1 run in 3 and raising the token
+# budget from 8192 to 16384 did not help (still 1 in 3). The same prompt at temperature 1.0
+# answered 3 for 3 and averaged 14s against 36s. Over-constrained, the chain of thought
+# loops instead of terminating and eats the budget. Vision stays low: qwen3-vl is not a
+# reasoning model and describing an image wants determinism, not exploration.
+TEMP_FOR_TASK = {"code": 1.0, "research": 1.0, "vision": 0.2}
+
+
+def do_llm(task: str, prompt: str, image_b64, unlocked=False, system: str = None) -> str:
     with MGR.lock:
         ipath = None
         if image_b64:
@@ -2121,7 +3158,359 @@ def do_llm(task: str, prompt: str, image_b64, unlocked=False) -> str:
         model = current_llm_model() or llm_model_for(task, unlocked)
         # gpt-oss reasoning models need headroom beyond the visible answer (the hidden
         # reasoning is also billed against max_tokens), so give the Language tab room.
-        return llm_raw(prompt, task=task, max_tokens=2048, image_path=ipath, model=model)
+        effort = REASONING_FOR_TASK.get(task, "low")
+        budget = 8192 if effort in ("high", "max") else 2048
+        # A reasoning model can still spend the whole budget thinking and emit nothing -
+        # measured here on a hard prompt even at 8192 tokens, and llm_raw turns that empty
+        # stdout into a RuntimeError. Rather than guess a budget that always wins, fall
+        # back once at shallow effort, which reliably answers.
+        temp = TEMP_FOR_TASK.get(task, 0.2)
+        try:
+            return llm_raw(prompt, task=task, max_tokens=budget, image_path=ipath,
+                           model=model, reasoning=effort, temperature=temp,
+                           system=system)
+        except RuntimeError:
+            if effort == "low":
+                raise
+            return llm_raw(prompt, task=task, max_tokens=budget, image_path=ipath,
+                           model=model, reasoning="low", temperature=temp,
+                           system=system)
+
+
+# ---- Language workspace (the model writes files here) -----------------------
+# The Language tab can create and edit real files. Everything it writes lands in
+# one sandboxed folder, so a wrong path from the model cannot reach the studio's
+# own code or anything else on disk.
+WORKSPACE = os.path.join(HERE, "workspace")
+os.makedirs(WORKSPACE, exist_ok=True)
+
+WS_MAX_BYTES = 2 * 1024 * 1024      # one file
+WS_MAX_FILES = 12                   # per reply
+WS_INLINE_CHARS = 12000             # of an open file fed back into the prompt
+WS_TEXT_EXT = {".html", ".htm", ".css", ".js", ".json", ".md", ".txt", ".py", ".sh",
+               ".ps1", ".bat", ".cmd", ".xml", ".svg", ".yml", ".yaml", ".csv",
+               ".ini", ".toml", ".sql", ".c", ".h", ".cpp", ".java", ".ts", ".tsx",
+               ".jsx", ".rs", ".go", ".rb", ".php", ".lua", ".r", ".vue", ""}
+WS_IMAGE_EXT = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico"}
+
+
+def _ws_path(name: str) -> str:
+    """Resolve a workspace-relative name to an absolute path inside WORKSPACE.
+
+    Rejects absolute paths, drive letters and any ..\ escape. This is the only
+    place a model-supplied path becomes a real one."""
+    name = (name or "").strip().replace("\\", "/").lstrip("/")
+    if not name or name.startswith("~") or ":" in name:
+        raise RuntimeError(f"bad file name {name!r}")
+    parts = [p for p in name.split("/") if p not in ("", ".")]
+    if any(p == ".." for p in parts) or len(parts) > 6:
+        raise RuntimeError(f"bad file name {name!r}")
+    base = os.path.abspath(WORKSPACE)
+    full = os.path.abspath(os.path.join(base, *parts))
+    if full != base and not full.startswith(base + os.sep):
+        raise RuntimeError(f"bad file name {name!r}")
+    return full
+
+
+def _ws_rel(full: str) -> str:
+    return os.path.relpath(full, WORKSPACE).replace("\\", "/")
+
+
+def ws_list() -> list:
+    out = []
+    for root, dirs, files in os.walk(WORKSPACE):
+        dirs[:] = [d for d in dirs if not d.startswith(".")]
+        for fn in files:
+            if fn.startswith("."):
+                continue
+            p = os.path.join(root, fn)
+            try:
+                st = os.stat(p)
+            except OSError:
+                continue
+            ext = os.path.splitext(fn)[1].lower()
+            out.append({"name": _ws_rel(p), "size": st.st_size, "mtime": st.st_mtime,
+                        "kind": ("image" if ext in WS_IMAGE_EXT else
+                                 "web" if ext in (".html", ".htm", ".svg") else
+                                 "text" if ext in WS_TEXT_EXT else "binary")})
+    out.sort(key=lambda f: -f["mtime"])
+    return out
+
+
+def ws_read(name: str) -> dict:
+    p = _ws_path(name)
+    if not os.path.isfile(p):
+        raise RuntimeError("no such file")
+    if os.path.getsize(p) > WS_MAX_BYTES:
+        raise RuntimeError("file too big to open here")
+    with open(p, "r", encoding="utf-8", errors="replace") as f:
+        return {"name": _ws_rel(p), "text": f.read()}
+
+
+def ws_save(name: str, text: str) -> dict:
+    """Write a file. Used by the model's file blocks and by hand edits in the panel."""
+    p = _ws_path(name)
+    data = (text or "")
+    if len(data.encode("utf-8", "replace")) > WS_MAX_BYTES:
+        raise RuntimeError("file too big (2 MB limit)")
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    _atomic_write(p, data)
+    return {"name": _ws_rel(p), "size": os.path.getsize(p)}
+
+
+def ws_delete(name: str) -> dict:
+    p = _ws_path(name)
+    if os.path.isfile(p):
+        os.remove(p)
+    return {"ok": True, "files": ws_list()}
+
+
+def ws_rename(name: str, to: str) -> dict:
+    src, dst = _ws_path(name), _ws_path(to)
+    if not os.path.isfile(src):
+        raise RuntimeError("no such file")
+    if os.path.exists(dst):
+        raise RuntimeError("a file with that name already exists")
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    os.replace(src, dst)
+    return {"ok": True, "files": ws_list()}
+
+
+# The model writes files by emitting delimited blocks. A local 20B model follows a
+# single literal marker far more reliably than it follows a tool-call schema, and
+# this works identically on every model the tab can load.
+WS_SYSTEM = """You are a helpful assistant running locally on the user's own PC. You can create and edit real files in their workspace.
+
+When the user asks you to make, write, build or change a file, emit it like this:
+
+===FILE index.html
+<!doctype html>
+<html>...</html>
+===END
+
+Rules for file blocks:
+- Write the COMPLETE file every time. Never emit a diff, a fragment, or "...".
+- One block per file. Use the exact markers ===FILE <name> and ===END.
+- Put any explanation OUTSIDE the block, and keep it short.
+- To change an existing file, emit the whole updated file under the same name.
+- Only use file blocks when a file is actually wanted; otherwise just answer."""
+
+_WS_BLOCK = re.compile(r"^===\s*FILE[ \t]+(.+?)[ \t]*$", re.M)
+
+
+def _strip_fence(body: str) -> str:
+    """Models like to wrap the block body in a markdown fence. Drop one if present,
+    but leave fences that are genuinely part of the content (a .md file) alone."""
+    lines = body.split("\n")
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    if len(lines) >= 2 and lines[0].lstrip().startswith("```") and lines[-1].strip() == "```":
+        lines = lines[1:-1]
+    return "\n".join(lines)
+
+
+def parse_file_blocks(text: str):
+    """Pull ===FILE/===END blocks out of a reply.
+
+    Returns (text_without_blocks, [(name, content), ...]). An unterminated block
+    (the model ran out of tokens) is dropped rather than written half-finished."""
+    files, out, pos, truncated = [], [], 0, False
+    for m in _WS_BLOCK.finditer(text):
+        name = m.group(1).strip().strip("`\"'").strip()
+        end = re.compile(r"^===\s*END\s*$", re.M).search(text, m.end())
+        if not end:
+            truncated = True
+            out.append(text[pos:m.start()])
+            pos = len(text)
+            break
+        out.append(text[pos:m.start()])
+        body = _strip_fence(text[m.end():end.start()].lstrip("\n"))
+        if name and len(files) < WS_MAX_FILES:
+            files.append((name, body))
+        pos = end.end()
+    out.append(text[pos:])
+    clean = re.sub(r"\n{3,}", "\n\n", "".join(out)).strip()
+    return clean, files, truncated
+
+
+def _ws_preamble(open_files: list) -> str:
+    """What the model is told about the workspace before every turn."""
+    listing = ws_list()
+    if not listing and not open_files:
+        return ""
+    bits = []
+    if listing:
+        bits.append("Files currently in the workspace:")
+        for f in listing[:40]:
+            bits.append(f"  {f['name']}  ({f['size']} bytes)")
+    for name in (open_files or [])[:3]:
+        try:
+            d = ws_read(name)
+        except Exception:
+            continue
+        body = d["text"]
+        note = ""
+        if len(body) > WS_INLINE_CHARS:
+            body = body[:WS_INLINE_CHARS]
+            note = "\n[... truncated — ask for a specific section if you need more]"
+        bits.append(f"\nCurrent contents of {d['name']}:\n{body}{note}")
+    return "\n".join(bits) + "\n\n---\n\n"
+
+
+# ---- conversations ----------------------------------------------------------
+# One JSON file per conversation, same shape as a Story Maker project, for the same
+# reason: it is inspectable, it survives a restart, and nothing is lost if the browser
+# is closed mid-reply. The browser holds an id, not a transcript.
+def _chat_path(cid: str) -> str:
+    cid = re.sub(r"[^A-Za-z0-9_-]", "_", (cid or "").strip())
+    if not cid:
+        raise RuntimeError("bad conversation id")
+    return os.path.join(CHATS, cid + ".json")
+
+
+def _chat_title(text: str) -> str:
+    """A conversation is named after its opening question, the way a file is named
+    after what is in it. Collapsed to one line so a pasted document does not become
+    a forty-line title."""
+    one = re.sub(r"\s+", " ", (text or "").strip())
+    return (one[:57] + "\u2026") if len(one) > 58 else (one or "New chat")
+
+
+def chat_list() -> dict:
+    out = []
+    for fn in os.listdir(CHATS):
+        if not fn.endswith(".json"):
+            continue
+        p = os.path.join(CHATS, fn)
+        try:
+            d = json.load(open(p, encoding="utf-8"))
+        except Exception:
+            continue          # a half-written file is not worth failing the list over
+        out.append({"id": d.get("id") or fn[:-5],
+                    "title": d.get("title") or "New chat",
+                    "task": d.get("task") or "code",
+                    "turns": sum(1 for m in d.get("messages", []) if m.get("role") == "user"),
+                    "files": sorted({f for m in d.get("messages", [])
+                                     for f in (m.get("files") or [])}),
+                    "created": d.get("created") or os.path.getmtime(p),
+                    "updated": d.get("updated") or os.path.getmtime(p)})
+    out.sort(key=lambda c: c.get("updated", 0), reverse=True)
+    return {"chats": out}
+
+
+def chat_load(cid: str) -> dict:
+    p = _chat_path(cid)
+    if not os.path.isfile(p):
+        raise RuntimeError("conversation not found")
+    return {"chat": json.load(open(p, encoding="utf-8"))}
+
+
+def chat_delete(cid: str) -> dict:
+    p = _chat_path(cid)
+    if os.path.isfile(p):
+        os.remove(p)
+    return {"ok": True, "id": cid}
+
+
+def chat_rename(cid: str, title: str) -> dict:
+    p = _chat_path(cid)
+    if not os.path.isfile(p):
+        raise RuntimeError("conversation not found")
+    c = json.load(open(p, encoding="utf-8"))
+    c["title"] = _chat_title(title)
+    c["updated"] = time.time()
+    _atomic_write(p, json.dumps(c, ensure_ascii=False, indent=1))
+    return {"ok": True, "id": cid, "title": c["title"]}
+
+
+def _chat_history(c: dict) -> str:
+    """The prior turns, as the continuation preamble. Built here rather than in the
+    browser so a reload, a restart or a second tab all see the same conversation."""
+    msgs = [m for m in c.get("messages", []) if m.get("text")]
+    tail = msgs[-(CHAT_CONTEXT_TURNS * 2):]
+    if not tail:
+        return ""
+    lines = ["Continue this conversation naturally. Recent exchange:"]
+    for m in tail:
+        lines.append(("User: " if m["role"] == "user" else "Assistant: ") + m["text"])
+    return "\n".join(lines) + "\n"
+
+
+def do_chat(d: dict) -> dict:
+    """Language tab: one reply, plus any files the model chose to write.
+
+    Wraps do_llm rather than replacing it — the model, reasoning effort and token
+    budget logic all stay in one place. The conversation itself lives on disk under
+    chats\\<id>.json; `d["chat"]` names it, and an absent or unknown id starts a
+    new one whose id comes back in the result."""
+    task = d.get("task", "code")
+    question = d.get("prompt", "")
+    want_files = bool(d.get("files", True)) and task != "vision"
+
+    # -- open (or start) the conversation --------------------------------------
+    cid = re.sub(r"[^A-Za-z0-9_-]", "_", (d.get("chat") or "").strip())
+    convo = None
+    if cid:
+        try:
+            convo = json.load(open(_chat_path(cid), encoding="utf-8"))
+        except Exception:
+            convo = None      # deleted from under us — start a fresh one, don't fail
+    if convo is None:
+        cid = uuid.uuid4().hex[:12]
+        convo = {"id": cid, "title": _chat_title(question), "task": task,
+                 "created": time.time(), "messages": []}
+
+    # -- build the prompt ------------------------------------------------------
+    # Vision stays single-shot: the model is answering about the attached image, and
+    # replaying a text transcript at it only ever confused the answer.
+    prompt = question
+    if task != "vision":
+        prompt = _chat_history(convo) + "User: " + question + "\nAssistant:"
+    if want_files:
+        prompt = _ws_preamble(d.get("open_files") or []) + prompt
+
+    text = do_llm(task, prompt, d.get("image"), d.get("unlocked"),
+                  system=(WS_SYSTEM if want_files else None))
+
+    written = []
+    if want_files:
+        text, blocks, truncated = parse_file_blocks(text)
+        for name, body in blocks:
+            try:
+                existed = os.path.isfile(_ws_path(name))
+                rec = ws_save(name, body)
+                rec["action"] = "edited" if existed else "created"
+                written.append(rec)
+            except Exception as e:
+                text += f"\n\n[could not write {name}: {e}]"
+        if truncated:
+            text += ("\n\n[a file block was cut off before ===END and was not written — "
+                     "ask again, or for a smaller file]")
+        if not text:
+            text = "wrote " + ", ".join(f["name"] for f in written) if written else ""
+
+    # -- append the turn and persist ------------------------------------------
+    # The image itself is deliberately not stored: it is a multi-MB data URL, and a
+    # transcript file that grows by megabytes per question is not a history, it is a
+    # disk problem. The marker is enough to replay what was asked.
+    convo["messages"].append({"role": "user", "text": question, "at": time.time(),
+                              "image": bool(d.get("image"))})
+    convo["messages"].append({"role": "ai", "text": text, "at": time.time(),
+                              "files": [f["name"] for f in written]})
+    convo["task"] = task
+    convo["updated"] = time.time()
+    if not convo.get("title") or convo["title"] == "New chat":
+        convo["title"] = _chat_title(question)
+    try:
+        _atomic_write(_chat_path(cid), json.dumps(convo, ensure_ascii=False, indent=1))
+    except Exception:
+        pass                  # a failed save must never lose the reply itself
+
+    return {"text": text or "(empty response)", "files": written,
+            "chat": cid, "title": convo["title"],
+            "workspace": ws_list() if written else None}
 
 
 def do_image(prompt: str, size: str, steps: int, seed: int, model: str = "base4b") -> str:
@@ -2154,10 +3543,7 @@ def do_edit(prompt: str, images_b64: list, model: str = "base4b",
         for i, b in enumerate(images_b64):
             if not b:
                 continue
-            ipath = os.path.join(TMP, f"edit_src_{i}.png")
-            with open(ipath, "wb") as f:
-                f.write(base64.b64decode(b.split(",")[-1]))
-            cmd += ["--image", ipath]
+            cmd += ["--image", _as_path(b, os.path.join(TMP, f"edit_src_{i}.png"))]
         if "--image" not in cmd:
             raise RuntimeError("no source image provided")
         rc, sout, err = _run(cmd, timeout=600)
@@ -2165,6 +3551,163 @@ def do_edit(prompt: str, images_b64: list, model: str = "base4b",
             raise RuntimeError(err or sout or "edit failed")
         # RAM-only output: the edited PNG came back over the websocket, not via disk.
         return sout
+
+
+def _last_error(err: str) -> str:
+    """Pull the meaningful line out of a child's stderr.
+
+    These tools log deprecation warnings and progress on stderr, so handing the raw
+    stream to the UI shows a torchaudio import notice where the real problem was an
+    empty file. Prefer an explicit 'error:' line, else the last non-warning line."""
+    lines = [l.strip() for l in (err or "").splitlines() if l.strip()]
+    for l in reversed(lines):
+        if l.lower().startswith("error:"):
+            return l[6:].strip()
+    noise = ("warning", "deprecat", "warnings.warn", "from torchaudio", "| df |", "it/s]")
+    for l in reversed(lines):
+        if not any(x in l.lower() for x in noise):
+            return l
+    return ""
+
+
+def _stamp(prefix: str, ext: str) -> str:
+    return f"{prefix}_{time.strftime('%Y%m%d_%H%M%S')}{ext}"
+
+
+def _b64_write(data_url: str, path: str) -> str:
+    """Persist a browser upload (data: URL or bare base64) to disk."""
+    raw = base64.b64decode((data_url or "").split(",")[-1])
+    with open(path, "wb") as f:
+        f.write(raw)
+    return path
+
+
+def _copy_or_b64(v: str, dest: str) -> str:
+    """Like _as_path, but the destination FILENAME matters — the lullaby/split
+    pipeline derives its work dir from the basename — so a staged upload is copied
+    into place rather than used where it lies."""
+    if v and not v.startswith("data:") and len(v) < 400 and os.path.isfile(v):
+        if os.path.abspath(v) != os.path.abspath(dest):
+            shutil.copyfile(v, dest)
+        return dest
+    return _b64_write(v, dest)
+
+
+def _as_path(v: str, dest: str) -> str:
+    """Accept either a browser upload (data: URL / bare base64) or a path already on
+    disk. A queued job staged its uploads at submit time, so by the time the handler
+    runs it may be holding a path — everything that used to assume base64 comes
+    through here. The length guard keeps a multi-MB data URL out of isfile()."""
+    if v and not v.startswith("data:") and len(v) < 400 and os.path.isfile(v):
+        return v
+    return _b64_write(v, dest)
+
+
+def do_sfx(d: dict) -> dict:
+    """Generate a sound effect. Returns every take, because picking between takes IS the
+    workflow for foley - a single render is almost never the one you keep."""
+    prompt = (d.get("prompt") or "").strip()
+    if not prompt:
+        raise RuntimeError("describe the sound first")
+    out = os.path.join(SFX, _stamp("sfx", ".flac"))
+    # SA3 is distilled: 8 steps, cfg 1.0, lcm — all fixed in sfxgen.py. There is no
+    # steps/cfg/negative to pass, and at cfg 1.0 a negative prompt does nothing anyway.
+    cmd = [sys.executable, SFXGEN, prompt, "--out", out,
+           "--seconds", str(float(d.get("seconds", 5))),
+           "--takes", str(max(1, min(8, int(d.get("takes", 2)))))]
+    if d.get("no_length"):
+        cmd += ["--no-length"]
+    if int(d.get("seed", -1)) >= 0:
+        cmd += ["--seed", str(int(d["seed"]))]
+
+    with MGR.lock:
+        MGR.claim_gpu()
+        rc, sout, err = _run(cmd, timeout=int(d.get("timeout", 1200)))
+    if rc != 0:
+        raise RuntimeError(_last_error(err) or sout or "sfx generation failed")
+    try:
+        rep = json.loads(sout.strip().splitlines()[-1])
+    except Exception:
+        rep = {}
+    files = [os.path.relpath(f, HERE).replace("\\", "/") for f in rep.get("files", [])]
+    return {"files": files, "seed": rep.get("seed")}
+
+
+MESH_WARN: list = []
+
+
+def do_mesh3d(d: dict) -> dict:
+    """One reference image -> an untextured .glb."""
+    if not d.get("path") and not d.get("file"):
+        raise RuntimeError("choose a reference image first")
+    src = d.get("path")
+    if src:
+        src = os.path.abspath(os.path.join(HERE, src))
+        if not src.startswith(os.path.abspath(HERE)) or not os.path.isfile(src):
+            raise RuntimeError("source not found")
+    else:
+        src = _as_path(d.get("file", ""), os.path.join(TMP, "mesh3d_in.png"))
+
+    # Strip the background unless told otherwise. Hunyuan3D reconstructs whatever plane
+    # it is shown: a character on a flat backdrop came back as two flat planes here, on
+    # every crop setting, until the backdrop was removed. rembg is already installed for
+    # Sprite Studio, so this costs a fraction of a second and is on by default.
+    if d.get("nobg", True):
+        cut = os.path.join(TMP, "mesh3d_nobg.png")
+        rc, _o, err = _run([COMFY_PY, SPRITEKIT, "cutout", "--file", src, "--out", cut],
+                           timeout=300)
+        if rc == 0 and os.path.isfile(cut):
+            src = cut
+        else:
+            # Degrade rather than fail: an uncut reference still often works, and the
+            # user gets a mesh plus an explanation instead of an error.
+            MESH_WARN.append(_last_error(err) or "background removal unavailable")
+
+    out = os.path.join(MESHES, _stamp("mesh", ".glb"))
+    cmd = [sys.executable, MESH3D, "--in", src, "--out", out,
+           "--resolution", str(int(d.get("resolution", 3072))),
+           "--octree", str(int(d.get("octree", 256))),
+           "--threshold", str(float(d.get("threshold", 0.6))),
+           "--steps", str(int(d.get("steps", 30))),
+           "--crop", ("none" if d.get("crop") == "none" else "center")]
+    if int(d.get("seed", -1)) >= 0:
+        cmd += ["--seed", str(int(d["seed"]))]
+
+    with MGR.lock:
+        MGR.claim_gpu()
+        rc, sout, err = _run(cmd, timeout=int(d.get("timeout", 2400)))
+    if rc != 0:
+        raise RuntimeError(_last_error(err) or sout or "mesh generation failed")
+    res = {"file": os.path.relpath(out, HERE).replace("\\", "/")}
+    if MESH_WARN:
+        res["warning"] = MESH_WARN.pop()
+    return res
+
+
+def do_enhance(d: dict) -> dict:
+    """Denoise a speech clip. Runs on CPU in its own env, so unlike everything else here
+    it deliberately does NOT take the Manager lock - a reference clip can be cleaned
+    while a TTS model stays resident, which is exactly when you want to do it."""
+    if not os.path.isfile(ENHANCE_PY):
+        raise RuntimeError("speech enhancement is not installed (conda env 'enhance')")
+    if not (d.get("audio") or "").strip():
+        raise RuntimeError("choose an audio clip first")
+    src = _b64_write(d.get("audio", ""), os.path.join(TMP, "enhance_in.wav"))
+    out = os.path.join(TMP, "enhance_out.wav")
+    cmd = [ENHANCE_PY, ENHANCE, src, "--out", out, "--mix", str(float(d.get("mix", 1.0)))]
+    if d.get("keep_rate"):
+        cmd += ["--keep-rate"]
+    rc, sout, err = _run(cmd, timeout=600)
+    if rc != 0 or not os.path.isfile(out):
+        raise RuntimeError(_last_error(err) or sout or "enhancement failed")
+    with open(out, "rb") as f:
+        b64 = base64.b64encode(f.read()).decode("ascii")
+    try:
+        rep = json.loads(sout.strip().splitlines()[-1])
+    except Exception:
+        rep = {}
+    return {"audio": "data:audio/wav;base64," + b64,
+            "in_db": rep.get("in_db"), "out_db": rep.get("out_db")}
 
 
 def do_music(d: dict) -> dict:
@@ -2204,10 +3747,8 @@ def do_music(d: dict) -> dict:
             cmd += ["--lyrics-file", lpath]
         # Optional remix source; staged copies are swept by cleanup_music_inputs().
         if d.get("audio"):
-            apath = os.path.join(TMP, "music_src" + (os.path.splitext(d.get("filename") or "")[1] or ".wav"))
-            with open(apath, "wb") as f:
-                f.write(base64.b64decode(d["audio"].split(",")[-1]))
-            cmd += ["--audio", apath]
+            ext = os.path.splitext(d.get("filename") or "")[1] or ".wav"
+            cmd += ["--audio", _as_path(d["audio"], os.path.join(TMP, "music_src" + ext))]
         rc, sout, err = _run(cmd, timeout=1200)
         line = (sout or "").strip().splitlines()[-1] if (sout or "").strip() else ""
         if rc != 0 or not line.startswith("{"):
@@ -2226,7 +3767,7 @@ def do_voice(mode: str, text: str, source_b64, target_b64, method: str = "tts") 
     with MGR.lock:
         w = MGR.workers.get("voice")
         if not w:
-            raise RuntimeError("Voice Changer model not loaded — click Load on that tab first")
+            raise RuntimeError("the Voice Changer model was not resident (queue bug)")
         if not target_b64:
             raise RuntimeError("provide a target voice (record or upload)")
         target = _write_wav(target_b64, "voice_target.wav")
@@ -2249,7 +3790,7 @@ def do_stt(audio_b64: str, filename: str) -> str:
     with MGR.lock:
         w = MGR.workers.get("stt")
         if not w:
-            raise RuntimeError("Speech→Text model not loaded — click Load on that tab first")
+            raise RuntimeError("the Speech→Text model was not resident (queue bug)")
         ext = os.path.splitext(filename or "a.wav")[1] or ".wav"
         apath = os.path.join(TMP, "stt_in" + ext)
         with open(apath, "wb") as f:
@@ -2650,7 +4191,7 @@ class StoryJob:
             if self.state == "running":
                 raise RuntimeError("a story is already generating — wait for it to finish")
             if not (MGR.key or "").startswith(("story:", "llm:")):
-                raise RuntimeError("load the Story model (or the Language model) first")
+                raise RuntimeError("no story/language model was resident (queue bug)")
             story = json.load(open(_story_path(sid), encoding="utf-8"))
             seq = _reading_order(story)
             if not seq:
@@ -2805,7 +4346,7 @@ def story_regen_scene(sid: str, key: str) -> dict:
     """Regenerate one scene's prose, reusing its stored bounded context."""
     with MGR.lock:
         if not (MGR.key or "").startswith(("story:", "llm:")):
-            raise RuntimeError("load the Story model (or the Language model) first")
+            raise RuntimeError("no story/language model was resident (queue bug)")
         story = json.load(open(_story_path(sid), encoding="utf-8"))
         seq = _reading_order(story)
         beat_pos = {it["key"]: i for i, it in enumerate(seq)}
@@ -3002,7 +4543,7 @@ class AudiobookJob:
             if self.state == "running":
                 raise RuntimeError("an audiobook is already rendering — wait for it to finish")
             if not (MGR.key or "").startswith(("tts:", "voicemodel:")):
-                raise RuntimeError("load a narration voice first (Kokoro / Chatterbox / Zonos / your voice)")
+                raise RuntimeError("no narration voice was resident (queue bug)")
             title, secs = _audiobook_sections(params.get("source", "story"), params.get("id", ""),
                                               params.get("text", ""), params.get("title", ""))
             max_chars = (XTTS_CHUNK_CHARS if (MGR.key or "").startswith("voicemodel:")
@@ -3132,8 +4673,8 @@ class LullabyJob:
         if self.state == "running":
             raise RuntimeError("a lullaby job is already running — wait for it to finish")
         if MGR.key:
-            raise RuntimeError("stop the loaded model first — Lullaby runs its own engine "
-                               "and needs the GPU")
+            raise RuntimeError("the GPU was not free — Lullaby runs its own engine "
+                               "(queue bug)")
         if not os.path.isfile(LULLABY_PY):
             raise RuntimeError("lullabykit is not installed (lullabykit/.venv missing)")
         if need_audio:
@@ -3142,9 +4683,7 @@ class LullabyJob:
                 raise RuntimeError("upload a song first")
             name = _safe_name(os.path.splitext(params.get("filename") or "song")[0]) or "song"
             ext = os.path.splitext(params.get("filename") or "")[1].lower() or ".mp3"
-            src = os.path.join(TMP, f"lullaby_src_{name}{ext}")
-            with open(src, "wb") as f:
-                f.write(base64.b64decode(audio.split(",")[-1]))
+            src = _copy_or_b64(audio, os.path.join(TMP, f"lullaby_src_{name}{ext}"))
         else:
             name = _safe_name(params.get("name") or "")
             if not name:
@@ -3568,8 +5107,8 @@ class SplitJob:
             if self.state == "running":
                 raise RuntimeError("a split is already running — wait for it to finish")
             if MGR.key:
-                raise RuntimeError("stop the loaded model first — Track Splitter runs "
-                                   "its own engine and needs the GPU")
+                raise RuntimeError("the GPU was not free — Track Splitter runs "
+                                   "its own engine (queue bug)")
             if not os.path.isfile(LULLABY_PY):
                 raise RuntimeError("lullabykit is not installed (lullabykit/.venv missing)")
             audio = params.get("audio") or ""
@@ -3578,9 +5117,7 @@ class SplitJob:
             name = _safe_name(os.path.splitext(params.get("filename") or "song")[0]) or "song"
             ext = os.path.splitext(params.get("filename") or "")[1].lower() or ".mp3"
             # same lullaby_src_<name> naming as LullabyJob — shares its cache
-            src = os.path.join(TMP, f"lullaby_src_{name}{ext}")
-            with open(src, "wb") as f:
-                f.write(base64.b64decode(audio.split(",")[-1]))
+            src = _copy_or_b64(audio, os.path.join(TMP, f"lullaby_src_{name}{ext}"))
             self._reset()
             self.state = "running"; self.name = name
             self._src = src
@@ -3802,7 +5339,7 @@ class SpriteJob:
             if self.state == "running":
                 raise RuntimeError("a sprite set is already rendering — wait for it or cancel it")
             if not (MGR.key or "").startswith("image:"):
-                raise RuntimeError("load the image model first (top of this tab)")
+                raise RuntimeError("the image model was not resident (queue bug)")
             ref = d.get("image") or ""
             if not ref:
                 raise RuntimeError("upload a reference image — it defines the character and style")
@@ -3825,9 +5362,7 @@ class SpriteJob:
             name, k = base, 2
             while os.path.exists(os.path.join(SPRITES, name)):
                 name, k = f"{base}_{k}", k + 1
-            refpath = os.path.join(TMP, "sprite_ref.png")
-            with open(refpath, "wb") as f:
-                f.write(base64.b64decode(ref.split(",")[-1]))
+            refpath = _as_path(ref, os.path.join(TMP, "sprite_ref.png"))
             self._reset()
             self.state = "running"; self.name = name
             self.total = sum(len(p) for _, p in plan)
@@ -3936,7 +5471,7 @@ class SpriteJob:
             if self.state == "running":
                 raise RuntimeError("a sprite job is already running — wait for it to finish")
             if not (MGR.key or "").startswith("image:"):
-                raise RuntimeError("load the image model first (top of this tab)")
+                raise RuntimeError("the image model was not resident (queue bug)")
             name = _safe_name(d.get("name") or "")
             act = re.sub(r"[^A-Za-z0-9 _-]", "", d.get("action") or "")
             idx = int(d.get("frame") or 0)
@@ -4103,8 +5638,10 @@ class H3Job:
             if p and p.poll() is None:
                 try:
                     p.kill()
+                    p.wait(timeout=10)
                 except Exception:
                     pass
+                comfy_cancel_ours()   # the H3 prompt itself is still rendering in ComfyUI
         return self.status()
 
     def start(self, d: dict) -> dict:
@@ -4112,7 +5649,7 @@ class H3Job:
             if self.state == "running":
                 raise RuntimeError("a video is already rendering — wait for it or cancel it")
             if MGR.key != "video":
-                raise RuntimeError("load the video model first (top of this tab)")
+                raise RuntimeError("the video model was not resident (queue bug)")
             prompt = (d.get("prompt") or "").strip()
             if not prompt:
                 raise RuntimeError("describe the shot — H3 needs a prompt even with references")
@@ -4120,8 +5657,13 @@ class H3Job:
             if mode not in ("t2v", "flf", "ref"):
                 raise RuntimeError(f"unknown mode {mode!r}")
 
-            # data-URL uploads -> scratch files h3gen.py can stage into ComfyUI
+            # data-URL uploads -> scratch files h3gen.py can stage into ComfyUI.
+            # A queued job staged its uploads to disk at submit time, so a value may
+            # already be a path — pass those straight through (they live under
+            # _tmp/queue/<id>/ and are swept when the job leaves the queue).
             def dump(b64: str, ext: str) -> str:
+                if b64 and not b64.startswith("data:") and os.path.isfile(b64):
+                    return b64
                 p = os.path.join(TMP, f"h3in_{uuid.uuid4().hex}{ext}")
                 with open(p, "wb") as f:
                     f.write(base64.b64decode((b64 or "").split(",")[-1]))
@@ -4949,55 +6491,394 @@ class ComposerJob:
 COMPOSERJOB = ComposerJob()
 
 
+# ---- queueable job types -----------------------------------------------------
+# Each entry says which model the job needs (so the runner can load it), what to
+# check before accepting the job, and how to run it. Everything below reuses the
+# handlers and job classes that already exist — the queue only schedules them.
+
+def _v_image(p: dict, stage: Stager) -> dict:
+    prompt = (p.get("prompt") or "").strip()
+    if not prompt:
+        raise RuntimeError("describe the image first")
+    return {"prompt": prompt, "size": p.get("size") or "1:1",
+            "steps": max(1, min(50, int(p.get("steps") or 20))),
+            "seed": int(p.get("seed", -1)), "model": p.get("model") or "base4b"}
+
+
+def _r_image(e: QEntry) -> dict:
+    p = e.params
+    return {"image": do_image(p["prompt"], p["size"], p["steps"], p["seed"], p["model"])}
+
+
+def _v_video(p: dict, stage: Stager) -> dict:
+    """Cheap, user-facing checks at submit time — an empty prompt must not surface
+    forty minutes later. H3Job.start re-checks the same things as its run-time
+    assertion, and does the arg building."""
+    d = dict(p)
+    if not (d.get("prompt") or "").strip():
+        raise RuntimeError("describe the shot — H3 needs a prompt even with references")
+    mode = d.get("mode") or "t2v"
+    if mode not in ("t2v", "flf", "ref"):
+        raise RuntimeError(f"unknown mode {mode!r}")
+    d["mode"] = mode
+    # Uploads become paths on disk; H3Job.start passes a path straight through.
+    if mode == "flf":
+        if not (d.get("first_frame") or d.get("last_frame")):
+            raise RuntimeError("first/last-frame mode needs at least one keyframe image")
+        for key in ("first_frame", "last_frame"):
+            if d.get(key):
+                d[key] = stage.save(d[key], ".png")
+    elif mode == "ref":
+        caps = (("ref_images", 9, ".png"), ("ref_videos", 3, ".mp4"),
+                ("ref_video_audios", 3, ".wav"), ("ref_audios", 3, ".wav"))
+        n = 0
+        for key, cap, ext in caps:
+            items = d.get(key) or []
+            if len(items) > cap:
+                raise RuntimeError(f"{key.replace('_', ' ')}: at most {cap} (got {len(items)})")
+            d[key] = [stage.save(it, ext) for it in items]
+            n += len(items)
+        if not n:
+            raise RuntimeError("reference mode needs at least one image, video or audio clip")
+    else:
+        for key in ("first_frame", "last_frame", "ref_images", "ref_videos",
+                    "ref_video_audios", "ref_audios"):
+            d.pop(key, None)
+    return d
+
+
+def _c_video(p: dict) -> dict:
+    return {"mode": p.get("mode") or "t2v", "aspect": p.get("aspect") or "16:9",
+            "short_edge": p.get("short_edge") or 768, "seconds": p.get("seconds") or 5.0,
+            "steps": p.get("steps") or 20, "easycache": bool(p.get("easycache", False)),
+            "sage": p.get("sage") or "disabled",
+            "nrefs": len(p.get("ref_images") or []) + len(p.get("ref_videos") or [])
+                     + len(p.get("ref_video_audios") or []) + len(p.get("ref_audios") or [])
+                     + bool(p.get("first_frame")) + bool(p.get("last_frame"))}
+
+
+def _img_model(p):
+    m = p.get("model") or "base4b"
+    return ("image:" + m, "image", {"model": m})
+
+
+def _v_edit(p: dict, stage: Stager) -> dict:
+    d = dict(p)
+    if not (d.get("prompt") or "").strip():
+        raise RuntimeError("describe the edit first")
+    imgs = [i for i in (d.get("images") or []) if i]
+    if not imgs:
+        raise RuntimeError("no source image provided")
+    d["images"] = [stage.save(i, ".png") for i in imgs]
+    return d
+
+
+def _v_sprite(p: dict, stage: Stager) -> dict:
+    d = dict(p)
+    if not d.get("image"):
+        raise RuntimeError("upload a reference image — it defines the character and style")
+    if d.get("mode") == "set" and not (d.get("actions") or []):
+        raise RuntimeError("pick at least one action for the set")
+    if d.get("mode") != "set" and (d.get("action") == "custom"
+                                   and not (d.get("custom") or "").strip()):
+        raise RuntimeError("describe the custom action")
+    d["image"] = stage.save(d["image"], ".png")
+    return d
+
+
+def _v_mesh3d(p: dict, stage: Stager) -> dict:
+    d = dict(p)
+    if not d.get("path") and not d.get("file"):
+        raise RuntimeError("choose a reference image first")
+    if d.get("file"):
+        # do_mesh3d takes `path` relative to the studio folder; the staged upload
+        # already lives under _tmp/queue/, so hand it over as a path and drop the blob.
+        d["path"] = os.path.relpath(stage.save(d.pop("file"), ".png"), HERE).replace("\\", "/")
+    return d
+
+
+def _v_music(p: dict, stage: Stager) -> dict:
+    d = dict(p)
+    if not (d.get("tags") or "").strip() and not (d.get("lyrics") or "").strip():
+        raise RuntimeError("describe the music (tags) or give it lyrics")
+    if d.get("audio"):
+        d["audio"] = stage.save(d["audio"],
+                                os.path.splitext(d.get("filename") or "")[1] or ".wav")
+    return d
+
+
+def _v_audiobook(p: dict, stage: Stager) -> dict:
+    d = dict(p)
+    if d.get("engine") == "voice" and not (d.get("voice_model") or "").strip():
+        raise RuntimeError("choose a trained voice to narrate with")
+    if d.get("source") == "text" and not (d.get("text") or "").strip():
+        raise RuntimeError("nothing to narrate")
+    if d.get("source") == "story" and not (d.get("id") or "").strip():
+        raise RuntimeError("choose a story to narrate")
+    return d
+
+
+def _ab_model(p):
+    if p.get("engine") == "voice":
+        n = p.get("voice_model") or ""
+        return ("voicemodel:" + n, "voicemodel", {"name": n})
+    e = p.get("engine") or "kokoro"
+    return ("tts:" + e, "tts", {"engine": e})
+
+
+def _v_nonempty(field: str, msg: str):
+    def v(p: dict, stage: Stager) -> dict:
+        if not (p.get(field) or "").strip():
+            raise RuntimeError(msg)
+        return dict(p)
+    return v
+
+
+def _v_lullaby(p: dict, stage: Stager) -> dict:
+    d = dict(p)
+    if d.get("audio"):
+        d["audio"] = stage.save(d["audio"],
+                                os.path.splitext(d.get("filename") or "")[1] or ".wav")
+    return d
+
+
+def _composer_model(p):
+    """The planner is one LLM call and it is optional: without a Language model the
+    Composer still arranges from its genre template. Orchestrate hands off to
+    SymphonyGen, which frees the card itself."""
+    if (p.get("engine") or "").lower() == "orchestrate" or not p.get("use_llm", True):
+        return None
+    m = llm_model_for("research")
+    return ("llm:" + m, "llm", {"task": "research"})
+
+
+def _composer_exclusive(p):
+    return (p.get("engine") or "").lower() == "orchestrate"
+
+
+JOB_TYPES.update({
+    # ---- image -------------------------------------------------------------
+    "image": Kind(lane="gpu", component="gen", model=_img_model,
+                  validate=_v_image, run=_r_image,
+                  label=lambda p: (p.get("prompt") or "")[:70],
+                  cost=lambda p: {"steps": p.get("steps"), "size": p.get("size"),
+                                  "model": p.get("model")}),
+    "edit": Kind(lane="gpu", component="edit", model=_img_model, validate=_v_edit,
+                 run=lambda e: {"image": do_edit(
+                     e.params["prompt"], e.params["images"], e.params.get("model", "base4b"),
+                     e.params.get("size", ""), int(e.params.get("steps", 20)),
+                     int(e.params.get("seed", -1)), float(e.params.get("cfg", 0)))},
+                 label=lambda p: (p.get("prompt") or "")[:70],
+                 cost=lambda p: {"steps": p.get("steps"), "n": len(p.get("images") or []),
+                                 "model": p.get("model")}),
+    "sprite": Kind(lane="gpu", component="sprite", model=_img_model, validate=_v_sprite,
+                   run=lambda e: drive_singleton(SPRITEJOB, e),
+                   label=lambda p: (p.get("name") or p.get("action") or "sprite set")[:70],
+                   cost=lambda p: {"mode": p.get("mode"), "steps": p.get("steps"),
+                                   "size": p.get("size"), "cutout": bool(p.get("cutout", True)),
+                                   "n": len(p.get("actions") or []) or p.get("frames") or 4}),
+    "sprite_reroll": Kind(lane="gpu", component="sprite", model=_img_model,
+                          run=lambda e: drive_singleton(SPRITEJOB, e, SPRITEJOB.reroll),
+                          label=lambda p: "re-roll %s frame %s" % (p.get("action") or "",
+                                                                   p.get("frame") or ""),
+                          cost=lambda p: {"steps": p.get("steps"), "size": p.get("size")}),
+    # ---- video -------------------------------------------------------------
+    "video": Kind(lane="gpu", component="video", model=lambda p: ("video", "video", {}),
+                  validate=_v_video, cost=_c_video,
+                  run=lambda e: drive_singleton(H3JOB, e),
+                  label=lambda p: (p.get("name") or p.get("prompt") or "")[:70]),
+    # ---- audio -------------------------------------------------------------
+    "music": Kind(lane="gpu", component="music", model=lambda p: ("music", "music", {}),
+                  validate=_v_music, run=lambda e: do_music(e.params),
+                  label=lambda p: (p.get("tags") or "music")[:70],
+                  cost=lambda p: {"model": p.get("model"), "seconds": p.get("seconds"),
+                                  "steps": p.get("steps"), "batch": p.get("batch")}),
+    # sfx and mesh3d call claim_gpu() themselves — they want the whole card and leave
+    # the slot empty, so the queue treats them as exclusive rather than model-keyed.
+    "sfx": Kind(lane="gpu", component="sfx", model=lambda p: None, exclusive=True,
+                validate=_v_nonempty("prompt", "describe the sound first"),
+                run=lambda e: do_sfx(e.params),
+                label=lambda p: (p.get("prompt") or "")[:70],
+                cost=lambda p: {"seconds": p.get("seconds"), "takes": p.get("takes")}),
+    "mesh3d": Kind(lane="gpu", component="mesh3d", model=lambda p: None, exclusive=True,
+                   validate=_v_mesh3d, run=lambda e: do_mesh3d(e.params),
+                   label=lambda p: os.path.basename(p.get("path") or "mesh"),
+                   cost=lambda p: {"nobg": bool(p.get("nobg", True))}),
+    "lullaby": Kind(lane="gpu", component="lullaby", model=lambda p: None, exclusive=True,
+                    validate=_v_lullaby,
+                    run=lambda e: drive_singleton(LULLABYJOB, e),
+                    label=lambda p: (p.get("name") or "lullaby")[:70],
+                    cost=lambda p: {"phase": "full", "engine": p.get("engine")}),
+    "lullaby_analyze": Kind(lane="gpu", component="lullaby", model=lambda p: None,
+                            exclusive=True, validate=_v_lullaby,
+                            run=lambda e: drive_singleton(LULLABYJOB, e, LULLABYJOB.analyze),
+                            label=lambda p: "analyze " + (p.get("name") or "")[:60],
+                            cost=lambda p: {"phase": "analyze"}),
+    "lullaby_render": Kind(lane="gpu", component="lullaby", model=lambda p: None,
+                           exclusive=True, validate=_v_lullaby,
+                           run=lambda e: drive_singleton(LULLABYJOB, e, LULLABYJOB.render),
+                           label=lambda p: "render " + (p.get("name") or "")[:60],
+                           cost=lambda p: {"phase": "render", "engine": p.get("engine")}),
+    "split": Kind(lane="gpu", component="split", model=lambda p: None, exclusive=True,
+                  validate=_v_lullaby,
+                  run=lambda e: drive_singleton(SPLITJOB, e),
+                  label=lambda p: (p.get("name") or "split")[:70],
+                  cost=lambda p: {"model": p.get("model")}),
+    # ---- speech ------------------------------------------------------------
+    "audiobook": Kind(lane="gpu", component="audiobook", model=_ab_model,
+                      validate=_v_audiobook,
+                      run=lambda e: drive_singleton(AUDIOBOOKJOB, e),
+                      label=lambda p: (p.get("title") or p.get("id") or "audiobook")[:70],
+                      cost=lambda p: {"engine": p.get("engine"), "source": p.get("source")}),
+    "voice_train": Kind(lane="gpu", component="voicestudio", model=lambda p: None,
+                        exclusive=True,
+                        validate=_v_nonempty("name", "name the voice first"),
+                        run=lambda e: drive_singleton(
+                            TRAINJOB, e,
+                            lambda d: TRAINJOB.start(d.get("name", ""), d.get("language", "en"),
+                                                     int(d.get("epochs", 12)),
+                                                     d.get("samples", []))),
+                        label=lambda p: "train voice " + (p.get("name") or ""),
+                        cost=lambda p: {"epochs": p.get("epochs"),
+                                        "n": len(p.get("samples") or [])}),
+    # ---- text --------------------------------------------------------------
+    "story": Kind(lane="gpu", component="story",
+                  model=lambda p: (f"story:{STORY_MODEL_LABEL}", "story", {}),
+                  validate=_v_nonempty("id", "choose a story first"),
+                  run=lambda e: drive_singleton(
+                      STORYJOB, e, lambda d: story_generate(d.get("id", ""))),
+                  label=lambda p: "story " + (p.get("id") or ""),
+                  cost=lambda p: {"id": p.get("id")}),
+    # Re-writing one scene is interactive: it jumps the queue, and it reuses whatever
+    # story/language model is already resident rather than paying a 3-minute load.
+    "story_regen": Kind(lane="gpu", component="story", priority=True,
+                        model=lambda p: (None if (MGR.key or "").startswith(("story:", "llm:"))
+                                         else (f"story:{STORY_MODEL_LABEL}", "story", {})),
+                        validate=_v_nonempty("key", "no scene selected"),
+                        run=lambda e: story_regen_scene(e.params.get("id", ""),
+                                                        e.params.get("key", "")),
+                        label=lambda p: "re-write " + (p.get("key") or ""),
+                        cost=lambda p: {"kind": "regen"}),
+    "composer": Kind(lane="gpu", component="composer",
+                     model=_composer_model, exclusive=_composer_exclusive,
+                     run=lambda e: drive_singleton(COMPOSERJOB, e),
+                     label=lambda p: (p.get("name") or p.get("title") or "song")[:70],
+                     cost=lambda p: {"secs": p.get("secs"), "plan": bool(p.get("plan"))}),
+    # A re-render never touches the GPU (FluidSynth on CPU) — its own lane, so it
+    # runs alongside image or video work instead of queueing behind it.
+    "composer_rerender": Kind(lane="cpu", component="composer", model=lambda p: None,
+                              run=lambda e: drive_singleton(COMPOSERJOB, e, COMPOSERJOB.rerender),
+                              label=lambda p: "re-render " + (p.get("name") or "")[:60],
+                              cost=lambda p: {"kind": "rerender"}),
+    # ---- interactive (priority lane) --------------------------------------
+    # These jump ahead of queued batch work but never interrupt a running job, and
+    # their payloads stay in memory: the browser call waiting on them is gone after
+    # a restart, so they are dropped rather than restored.
+    "chat": Kind(lane="gpu", component="lang", priority=True,
+                 model=lambda p: ("llm:" + llm_model_for(p.get("task", "code"),
+                                                         p.get("unlocked")), "llm",
+                                  {"task": p.get("task", "code"),
+                                   "unlocked": p.get("unlocked")}),
+                 validate=_v_nonempty("prompt", "type something first"),
+                 run=lambda e: do_chat(e.params),
+                 label=lambda p: (p.get("prompt") or "")[:70],   # now the question alone
+                 cost=lambda p: {"task": p.get("task")}),
+    "stt": Kind(lane="gpu", component="stt", priority=True,
+                model=lambda p: ("stt:" + (p.get("variant") or DEFAULT_STT), "stt",
+                                 {"variant": p.get("variant") or DEFAULT_STT}),
+                validate=_v_nonempty("audio", "choose an audio clip first"),
+                run=lambda e: {"text": do_stt(e.params.get("audio", ""),
+                                              e.params.get("filename", "a.wav"))},
+                label=lambda p: "transcribe " + (p.get("filename") or ""),
+                cost=lambda p: {"variant": p.get("variant")}),
+    "tts": Kind(lane="gpu", component="tts", priority=True,
+                model=lambda p: ("tts:" + (p.get("engine") or "kokoro"), "tts",
+                                 {"engine": p.get("engine") or "kokoro"}),
+                validate=_v_nonempty("text", "type something to say"),
+                run=lambda e: {"audio": do_tts(e.params.get("text", ""),
+                                               e.params.get("voice", ""),
+                                               _resolve_ref(e.params),
+                                               _tts_controls(e.params))},
+                label=lambda p: (p.get("text") or "")[:70],
+                cost=lambda p: {"engine": p.get("engine")}),
+    "voice": Kind(lane="gpu", component="tts", priority=True,
+                  model=lambda p: ("voice", "voice", {}),
+                  run=lambda e: {"audio": do_voice(e.params.get("mode", "text"),
+                                                   e.params.get("text", ""),
+                                                   e.params.get("source"),
+                                                   e.params.get("target"),
+                                                   e.params.get("method", "tts"))},
+                  label=lambda p: "voice changer",
+                  cost=lambda p: {"mode": p.get("mode"), "method": p.get("method")}),
+    "voicemodel": Kind(lane="gpu", component="voicestudio", priority=True,
+                       model=lambda p: ("voicemodel:" + (p.get("name") or ""), "voicemodel",
+                                        {"name": p.get("name") or ""}),
+                       validate=_v_nonempty("name", "choose a trained voice"),
+                       run=lambda e: do_voicemodel(e.params.get("text", ""),
+                                                   e.params.get("audio"),
+                                                   _tts_controls(e.params)),
+                       label=lambda p: "voice " + (p.get("name") or ""),
+                       cost=lambda p: {"name": p.get("name")}),
+    # CPU-only in its own conda env: it never contended for the GPU and must not
+    # start doing so now — a reference clip gets cleaned while a model stays resident.
+    "enhance": Kind(lane="cpu", component="tts", priority=True, model=lambda p: None,
+                    validate=_v_nonempty("audio", "choose an audio clip first"),
+                    run=lambda e: do_enhance(e.params),
+                    label=lambda p: "enhance speech",
+                    cost=lambda p: {"mix": p.get("mix")}),
+})
+
+
+def queue_add(d: dict) -> dict:
+    """Submit a job. wait=true blocks until it finishes and returns the result,
+    which is how the interactive tabs keep their current single-call shape."""
+    e = QUEUE.add(d.get("kind", ""), d.get("params") or {}, bool(d.get("priority")))
+    if not d.get("wait"):
+        return {"id": e.id, "job": e.public()}
+    if not e.done_evt.wait(timeout=float(d.get("timeout") or 3600)):
+        raise RuntimeError("timed out waiting for the job")
+    if e.state == "error":
+        raise RuntimeError(e.message or "job failed")
+    if e.state == "cancelled":
+        raise RuntimeError("cancelled")
+    out = dict(e.result or {})
+    out["id"] = e.id
+    return out
+
+
+def queue_result(jid: str) -> dict:
+    e = QUEUE.get(jid)
+    if not e:
+        raise RuntimeError("no such job")
+    return {"id": e.id, "state": e.state, "message": e.message,
+            "result": e.result, "files": e.files}
+
+
 # ---- HTTP -------------------------------------------------------------------
 POST_ROUTES = {
+    "/api/queue/add": queue_add,
+    "/api/queue/cancel": lambda d: QUEUE.cancel(d.get("id", "")),
+    "/api/queue/move": lambda d: QUEUE.move(d.get("id", ""), d.get("to", 0)),
+    "/api/queue/clear": lambda d: QUEUE.clear(d.get("what") or "finished"),
+    "/api/pin": lambda d: MGR.pin(d.get("worker", ""), d),
+    "/api/unpin": lambda d: MGR.unpin(),
+    "/api/reclaim": lambda d: comfy_reclaim(force=True),
     "/api/load": lambda d: MGR.load(d.get("worker", ""), d),
     "/api/stop": lambda d: MGR.stop(),
-    "/api/llm": lambda d: {"text": do_llm(d.get("task", "code"), d.get("prompt", ""),
-                                          d.get("image"), d.get("unlocked"))},
-    "/api/image": lambda d: {"image": do_image(d.get("prompt", ""), d.get("size", "1:1"),
-                                               int(d.get("steps", 20)), int(d.get("seed", -1)),
-                                               d.get("model", "base4b"))},
-    "/api/edit": lambda d: {"image": do_edit(d.get("prompt", ""), d.get("images", []),
-                                             d.get("model", "base4b"), d.get("size", ""),
-                                             int(d.get("steps", 20)), int(d.get("seed", -1)),
-                                             float(d.get("cfg", 0)))},
-    "/api/music": lambda d: do_music(d),
-    "/api/stt": lambda d: {"text": do_stt(d.get("audio", ""), d.get("filename", "a.wav"))},
-    "/api/tts": lambda d: {"audio": do_tts(d.get("text", ""), d.get("voice", ""), _resolve_ref(d),
-                                           _tts_controls(d))},
-    "/api/voice": lambda d: {"audio": do_voice(d.get("mode", "text"), d.get("text", ""),
-                                               d.get("source"), d.get("target"), d.get("method", "tts"))},
-    "/api/voicemodel": lambda d: do_voicemodel(d.get("text", ""), d.get("audio"), _tts_controls(d)),
-    "/api/voice_train": lambda d: TRAINJOB.start(d.get("name", ""), d.get("language", "en"),
-                                                 int(d.get("epochs", 12)), d.get("samples", [])),
     "/api/voice_delete": lambda d: delete_voice(d.get("name", "")),
     # Story Maker
     "/api/story_save": lambda d: story_save(d.get("story", {})),
     "/api/story_delete": lambda d: story_delete(d.get("id", "")),
-    "/api/story_generate": lambda d: story_generate(d.get("id", "")),
-    "/api/story_regen_scene": lambda d: story_regen_scene(d.get("id", ""), d.get("key", "")),
     "/api/story_export": lambda d: story_export(d.get("id", "")),
-    # Audiobook
-    "/api/audiobook_start": lambda d: AUDIOBOOKJOB.start(d),
-    # Lullaby Studio
-    "/api/lullaby_start": lambda d: LULLABYJOB.start(d),
-    "/api/lullaby_analyze": lambda d: LULLABYJOB.analyze(d),
-    "/api/lullaby_render": lambda d: LULLABYJOB.render(d),
-    # Track Splitter
-    "/api/split_start": lambda d: SPLITJOB.start(d),
-    # Video (MiniMax H3)
-    "/api/h3_start": lambda d: H3JOB.start(d),
-    "/api/h3_cancel": lambda d: H3JOB.cancel(),
+    # Language conversations (the transcript lives on the server, not the browser)
+    "/api/chat_delete": lambda d: chat_delete(d.get("id", "")),
+    "/api/chat_rename": lambda d: chat_rename(d.get("id", ""), d.get("title", "")),
+    # Language workspace (files the model creates and edits)
+    "/api/ws_save": lambda d: ws_save(d.get("name", ""), d.get("text", "")),
+    "/api/ws_delete": lambda d: ws_delete(d.get("name", "")),
+    "/api/ws_rename": lambda d: ws_rename(d.get("name", ""), d.get("to", "")),
+    # Library deletes (not generation — these never queue)
     "/api/h3_delete": lambda d: h3_delete(d.get("name", "")),
-    # Sprite Studio
-    "/api/sprite_start": lambda d: SPRITEJOB.start(d),
-    "/api/sprite_cancel": lambda d: SPRITEJOB.cancel(),
-    "/api/sprite_reroll": lambda d: SPRITEJOB.reroll(d),
-    # Composer
-    "/api/composer_start": lambda d: COMPOSERJOB.start(d),
-    "/api/composer_cancel": lambda d: COMPOSERJOB.cancel(),
-    "/api/composer_rerender": lambda d: COMPOSERJOB.rerender(d),
 }
 
 
@@ -5014,6 +6895,32 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header(k, v)
         self.end_headers()
         self.wfile.write(data)
+
+    def _serve_workspace_file(self):
+        """Serve a workspace file for the artifact preview (iframe, <img>, download).
+
+        Same sandboxing as _ws_path: anything that resolves outside the workspace
+        is a 404. Served with no-store so an edited file re-renders immediately."""
+        from urllib.parse import unquote, urlparse
+        rel = unquote(urlparse(self.path).path[len("/ws/"):])
+        try:
+            full = _ws_path(rel)
+        except Exception:
+            self._send(404, json.dumps({"error": "not found"}))
+            return
+        if not os.path.isfile(full):
+            self._send(404, json.dumps({"error": "not found"}))
+            return
+        ext = os.path.splitext(full)[1].lower()
+        ctype = {".html": "text/html; charset=utf-8", ".htm": "text/html; charset=utf-8",
+                 ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8",
+                 ".json": "application/json", ".svg": "image/svg+xml",
+                 ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                 ".gif": "image/gif", ".webp": "image/webp", ".ico": "image/x-icon",
+                 ".csv": "text/csv; charset=utf-8", ".md": "text/plain; charset=utf-8",
+                 }.get(ext, "text/plain; charset=utf-8")
+        with open(full, "rb") as f:
+            self._send(200, f.read(), ctype, extra={"Cache-Control": "no-store"})
 
     def _serve_audiobook_file(self):
         from urllib.parse import unquote, urlparse
@@ -5155,6 +7062,36 @@ class Handler(BaseHTTPRequestHandler):
         with open(safe, "rb") as f:
             shutil.copyfileobj(f, self.wfile)
 
+    # Content types for the output folders. BaseHTTPRequestHandler has no idea what a
+    # .flac or a .glb is, and an <audio> element handed application/json simply refuses
+    # to play - which looked exactly like "the generator produced broken files".
+    _OUT_CTYPES = {
+        ".flac": "audio/flac", ".wav": "audio/wav", ".mp3": "audio/mpeg",
+        ".opus": "audio/opus", ".ogg": "audio/ogg",
+        ".glb": "model/gltf-binary", ".gltf": "model/gltf+json",
+        ".png": "image/png", ".jpg": "image/jpeg", ".mp4": "video/mp4",
+        ".json": "application/json",
+    }
+
+    def _serve_output_file(self, prefix: str, root: str):
+        """Serve one file from a studio output folder, path-traversal-checked."""
+        from urllib.parse import unquote, urlparse
+        rel = unquote(urlparse(self.path).path[len(prefix):])
+        base = os.path.normpath(root)
+        safe = os.path.normpath(os.path.join(base, rel))
+        if not safe.startswith(base + os.sep) or not os.path.isfile(safe):
+            self._send(404, json.dumps({"error": "not found"}))
+            return
+        ext = os.path.splitext(safe)[1].lower()
+        self.send_response(200)
+        self.send_header("Content-Type", self._OUT_CTYPES.get(ext, "application/octet-stream"))
+        self.send_header("Content-Length", str(os.path.getsize(safe)))
+        # Browsers range-request media; without this an <audio> scrub bar can misbehave.
+        self.send_header("Accept-Ranges", "none")
+        self.end_headers()
+        with open(safe, "rb") as f:
+            shutil.copyfileobj(f, self.wfile)
+
     def do_GET(self):
         if self.path in ("/", "/index.html"):
             with open(os.path.join(HERE, "index.html"), "rb") as f:
@@ -5168,19 +7105,53 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, json.dumps({"ok": True}))
         elif self.path == "/api/status":
             self._send(200, json.dumps(MGR.status()))
+        elif self.path == "/api/queue":
+            self._send(200, json.dumps(QUEUE.snapshot()),
+                       extra={"Cache-Control": "no-store"})
+        elif self.path.startswith("/api/queue/result"):
+            # Kept off the 1.5s poll on purpose: an image result is a multi-MB data
+            # URL, fetched once when the panel sees the job finish.
+            from urllib.parse import urlparse, parse_qs
+            jid = (parse_qs(urlparse(self.path).query).get("id", [""]) or [""])[0]
+            try:
+                self._send(200, json.dumps(queue_result(jid)))
+            except Exception as e:
+                self._send(404, json.dumps({"error": str(e)}))
         elif self.path == "/api/gpu":
             self._send(200, json.dumps(gpu_stats()))
         elif self.path == "/api/config":
             self._send(200, json.dumps({"unlocked_model": OLLAMA_UNLOCKED,
                                         "standard_model": "gpt-oss:20b",
-                                        "vision_model": "qwen3-vl:8b"}))
+                                        "vision_model": "qwen3-vl:8b",
+                                        "stt_variant": DEFAULT_STT,
+                                        "stt_models": STT_MODELS}))
         elif self.path == "/api/components":
             self._send(200, json.dumps(installed_components()),
                        extra={"Cache-Control": "no-store"})
+        elif self.path == "/api/chat_list":
+            self._send(200, json.dumps(chat_list()),
+                       extra={"Cache-Control": "no-store"})
+        elif self.path.startswith("/api/chat_load"):
+            from urllib.parse import urlparse, parse_qs
+            cid = (parse_qs(urlparse(self.path).query).get("id", [""]) or [""])[0]
+            try:
+                self._send(200, json.dumps(chat_load(cid)))
+            except Exception as e:
+                self._send(404, json.dumps({"error": str(e)}))
+        elif self.path == "/api/ws_list":
+            self._send(200, json.dumps({"files": ws_list()}),
+                       extra={"Cache-Control": "no-store"})
+        elif self.path.startswith("/api/ws_read"):
+            from urllib.parse import urlparse, parse_qs, unquote
+            n = (parse_qs(urlparse(self.path).query).get("name", [""]) or [""])[0]
+            try:
+                self._send(200, json.dumps(ws_read(unquote(n))))
+            except Exception as e:
+                self._send(404, json.dumps({"error": str(e)}))
+        elif self.path.startswith("/ws/"):
+            self._serve_workspace_file()
         elif self.path == "/api/voices":
             self._send(200, json.dumps({"voices": list_voices()}))
-        elif self.path == "/api/voice_train_status":
-            self._send(200, json.dumps(TRAINJOB.status()))
         elif self.path == "/api/scripts":
             try:
                 with open(SCRIPTS_JSON, encoding="utf-8") as f:
@@ -5189,12 +7160,6 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, json.dumps([]))
         elif self.path == "/api/story_list":
             self._send(200, json.dumps(story_list()))
-        elif self.path == "/api/story_status":
-            self._send(200, json.dumps(STORYJOB.status()))
-        elif self.path == "/api/audiobook_status":
-            self._send(200, json.dumps(AUDIOBOOKJOB.status()))
-        elif self.path == "/api/lullaby_status":
-            self._send(200, json.dumps(LULLABYJOB.status()))
         elif self.path.startswith("/api/lullaby_info"):
             from urllib.parse import urlparse, parse_qs
             name = (parse_qs(urlparse(self.path).query).get("name", [""]) or [""])[0]
@@ -5206,8 +7171,6 @@ class Handler(BaseHTTPRequestHandler):
             self._serve_lullaby_preview()
         elif self.path.startswith("/lullabies/"):
             self._serve_lullaby_file()
-        elif self.path == "/api/split_status":
-            self._send(200, json.dumps(SPLITJOB.status()))
         elif self.path == "/api/split_list":
             self._send(200, json.dumps({"splits": split_list()}))
         elif self.path.startswith("/api/split_zip"):
@@ -5230,8 +7193,6 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, json.dumps({"refs": list_refs()}))
         elif self.path.startswith("/audiobooks/"):
             self._serve_audiobook_file()
-        elif self.path == "/api/composer_status":
-            self._send(200, json.dumps(COMPOSERJOB.status()))
         elif self.path == "/api/composer_library":
             try:
                 self._send(200, json.dumps(composer_library()))
@@ -5269,8 +7230,6 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(404, json.dumps({"error": str(e)}))
         elif self.path.startswith("/compositions/"):
             self._serve_composition_file()
-        elif self.path == "/api/h3_status":
-            self._send(200, json.dumps(H3JOB.status()))
         elif self.path == "/api/h3_list":
             self._send(200, json.dumps({"videos": h3_list()}))
         elif self.path.startswith("/api/h3_file"):
@@ -5281,8 +7240,6 @@ class Handler(BaseHTTPRequestHandler):
                 self._serve_range(p, "video/mp4")   # ranged: the player must seek
             else:
                 self._send(404, json.dumps({"error": "not found"}))
-        elif self.path == "/api/sprite_status":
-            self._send(200, json.dumps(SPRITEJOB.status()))
         elif self.path.startswith("/api/sprite_zip"):
             from urllib.parse import urlparse, parse_qs
             name = (parse_qs(urlparse(self.path).query).get("name", [""]) or [""])[0]
@@ -5299,6 +7256,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(404, json.dumps({"error": str(e)}))
         elif self.path.startswith("/sprites/"):
             self._serve_sprite_file()
+        elif self.path.startswith("/sfx/"):
+            self._serve_output_file("/sfx/", SFX)
+        elif self.path.startswith("/meshes/"):
+            self._serve_output_file("/meshes/", MESHES)
         elif self.path.startswith("/api/story_load"):
             from urllib.parse import urlparse, parse_qs
             sid = (parse_qs(urlparse(self.path).query).get("id", [""]) or [""])[0]
@@ -5343,6 +7304,20 @@ if __name__ == "__main__":
     host = os.environ.get("STUDIO_HOST", "127.0.0.1")
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8800
     ip = lan_ip()
+    # The manager's "nothing is resident" starts true only if it IS true: ComfyUI,
+    # Ollama and koboldcpp are separate processes that survive a studio restart, so
+    # a fresh MGR.key of None can otherwise mean "5GB free" while the card is full,
+    # and the first queued job fails to load its model. Free everything first.
+    try:
+        MGR.stop()
+    except Exception:
+        pass
+    # Bring back whatever was queued when the server last stopped, then start one
+    # runner per lane. Only the gpu runner loads and unloads models.
+    os.makedirs(QUEUE_STAGE, exist_ok=True)
+    QUEUE.restore()
+    for _lane in ("gpu", "cpu"):
+        Runner(_lane).start()
     print("Local AI Studio")
     print(f"  this machine : http://127.0.0.1:{port}")
     if host != "127.0.0.1":
@@ -5351,7 +7326,7 @@ if __name__ == "__main__":
     ThreadingHTTPServer((host, port), Handler).serve_forever()
 ```
 
-## File 2 of 29 — `%USERPROFILE%\local-ai-studio\spritekit.py`
+## File 2 of 32 — `%USERPROFILE%\local-ai-studio\spritekit.py`
 
 ```python
 #!/usr/bin/env python3
@@ -5443,6 +7418,28 @@ def cmd_frame(a) -> int:
     return 0
 
 
+def cmd_cutout(a) -> int:
+    """Cut the background out of one image and flatten it onto a solid colour.
+
+    Used by the Image -> 3D tab rather than Sprite Studio. Hunyuan3D reconstructs
+    whatever plane it is shown, so a character photographed against a flat backdrop
+    comes back as the backdrop: measured here as two flat planes instead of a figure,
+    regardless of cropping. Removing the background first is the difference between a
+    mesh and a wall. Composited onto opaque white because the 3D path takes RGB and
+    would otherwise discard the alpha that carries the silhouette."""
+    from PIL import Image
+    if not os.path.isfile(a.file):
+        print(f"not found: {a.file}", file=sys.stderr)
+        return 1
+    cutout = load_cutout(True)
+    img = cutout(Image.open(a.file).convert("RGBA"))
+    bg = Image.new("RGB", img.size, (255, 255, 255))
+    bg.paste(img, (0, 0), img)
+    bg.save(a.out)
+    print(json.dumps({"out": a.out}))
+    return 0
+
+
 def cmd_strip(a) -> int:
     """Assemble an action's strip sheet from already-processed frames (no cutout,
     no resize) — used after a single-frame re-roll."""
@@ -5500,20 +7497,23 @@ def main() -> int:
     p3.add_argument("--file", required=True)
     p3.add_argument("--size", type=int, default=256)
     p3.add_argument("--cutout", action="store_true")
+    p5 = sub.add_parser("cutout", help="remove the background from one image, flatten to white")
+    p5.add_argument("--file", required=True)
+    p5.add_argument("--out", required=True)
     p4 = sub.add_parser("strip", help="rebuild an action strip from processed frames")
     p4.add_argument("--dir", required=True)
     p4.add_argument("--size", type=int, default=256)
     p4.add_argument("--sheet", required=True)
     a = ap.parse_args()
-    return {"action": cmd_action, "combine": cmd_combine,
-            "frame": cmd_frame, "strip": cmd_strip}[a.cmd](a)
+    return {"action": cmd_action, "combine": cmd_combine, "frame": cmd_frame,
+            "strip": cmd_strip, "cutout": cmd_cutout}[a.cmd](a)
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-## File 3 of 29 — `%USERPROFILE%\local-ai-studio\h3gen.py`
+## File 3 of 32 — `%USERPROFILE%\local-ai-studio\h3gen.py`
 
 ```python
 #!/usr/bin/env python
@@ -5608,6 +7608,14 @@ NOWIN = {"creationflags": 0x08000000} if os.name == "nt" else {}
 
 
 # ---- HTTP -------------------------------------------------------------------
+
+
+def _client_id() -> str:
+    # The studio sets STUDIO_COMFY_TAG so a cancel can find and stop this prompt in
+    # ComfyUI's queue; killing this script alone leaves ComfyUI rendering it.
+    return os.environ.get("STUDIO_COMFY_TAG", "") + uuid.uuid4().hex
+
+
 def _post(path: str, obj: dict) -> dict:
     req = urllib.request.Request(COMFY + path, data=json.dumps(obj).encode(),
                                  headers={"Content-Type": "application/json"})
@@ -5893,7 +7901,7 @@ def run(graph: dict, timeout: int, progress: bool) -> bytes:
       == STAGE <label>
       == PROGRESS <done>/<total> <elapsed_seconds>
     """
-    client_id = uuid.uuid4().hex
+    client_id = _client_id()
     sock, rest = _ws_open(client_id)
     ws = _WS(sock, rest)
     started = time.time()
@@ -6090,7 +8098,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-## File 4 of 29 — `%USERPROFILE%\local-ai-studio\composerkit.py`
+## File 4 of 32 — `%USERPROFILE%\local-ai-studio\composerkit.py`
 
 ```python
 #!/usr/bin/env python3
@@ -8353,7 +10361,7 @@ if __name__ == "__main__":
     sys.exit(main())
 ```
 
-## File 5 of 29 — `%USERPROFILE%\local-ai-studio\symphgen.py`
+## File 5 of 32 — `%USERPROFILE%\local-ai-studio\symphgen.py`
 
 ```python
 #!/usr/bin/env python
@@ -8905,7 +10913,7 @@ if __name__ == "__main__":
     sys.exit(main())
 ```
 
-## File 6 of 29 — `%USERPROFILE%\local-ai-studio\sf3convert.py`
+## File 6 of 32 — `%USERPROFILE%\local-ai-studio\sf3convert.py`
 
 ```python
 #!/usr/bin/env python3
@@ -9182,7 +11190,7 @@ if __name__ == "__main__":
     sys.exit(main())
 ```
 
-## File 7 of 29 — `%USERPROFILE%\local-ai-studio\lullabykit\pipeline.py`
+## File 7 of 32 — `%USERPROFILE%\local-ai-studio\lullabykit\pipeline.py`
 
 ```python
 """
@@ -10564,7 +12572,7 @@ if __name__ == "__main__":
     main()
 ```
 
-## File 8 of 29 — `%USERPROFILE%\local-ai-studio\index.html`
+## File 8 of 32 — `%USERPROFILE%\local-ai-studio\index.html`
 
 ```html
 <!doctype html>
@@ -11108,6 +13116,12 @@ if __name__ == "__main__":
   .panel[data-panel="stt"],.panel[data-panel="tts"],.panel[data-panel="voicestudio"],.panel[data-panel="audiobook"]{--tone:var(--hue-voice)}
   .panel[data-panel="story"]{--tone:var(--hue-story)}
   .panel[data-panel="video"]{--tone:var(--hue-video)}
+  /* GLB preview: the canvas is transparent so the stage's own background shows
+     through and the mesh sits in the panel rather than in a black box. */
+  #m3Canvas{background:linear-gradient(180deg,rgba(127,140,158,.10),rgba(127,140,158,.02))}
+  #m3Canvas:active{cursor:grabbing}
+  .m3bar{display:flex;align-items:center;gap:8px;margin-top:10px}
+  .m3bar img{height:44px;width:44px;object-fit:cover;border-radius:6px;opacity:.75}
   .panel[data-panel="home"]{--tone:var(--hue-home)}
   /* Video tab: reference slots (up to 9 images / 3 videos / 3 audio) */
   .refgrid{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
@@ -11264,6 +13278,157 @@ if __name__ == "__main__":
     .stpalette{width:210px;flex-basis:210px}.stinspector{width:240px;flex-basis:240px}
   }
   @media(prefers-reduced-motion:reduce){*{animation:none !important;transition:none !important}}
+
+  /* ---- job queue ---------------------------------------------------------
+     The queue replaced per-tab Load/Stop: every tab submits here and one runner
+     drains it, loading and unloading models on the way. */
+  .qbtn{display:flex;align-items:center;gap:7px;height:32px;padding:0 11px;
+        border:1px solid var(--border);border-radius:var(--r-full);
+        background:var(--surface-2);color:var(--ink);font-size:12.5px;font-weight:550;
+        cursor:pointer;transition:background var(--dur) var(--ease),border-color var(--dur) var(--ease)}
+  .qbtn:hover{background:var(--surface-3);border-color:var(--border)}
+  .qbtn.busy{border-color:var(--accent-ring);background:var(--accent-soft)}
+  .qbtn .qn{min-width:18px;height:18px;padding:0 5px;border-radius:var(--r-full);
+            background:var(--accent);color:#fff;font-size:11px;font-weight:650;
+            display:inline-flex;align-items:center;justify-content:center}
+  .qbtn.idle .qn{background:var(--surface-3);color:var(--mut)}
+  .qbtn .qeta{color:var(--mut);font-variant-numeric:tabular-nums}
+  .qspin{width:12px;height:12px;border-radius:50%;border:2px solid var(--accent-ring);
+         border-top-color:transparent;animation:qspin .8s linear infinite;flex:0 0 auto}
+  @keyframes qspin{to{transform:rotate(360deg)}}
+
+  .qdrawer{position:fixed;top:0;right:0;bottom:0;width:min(430px,94vw);z-index:60;
+           background:var(--surface-solid);border-left:1px solid var(--border);
+           box-shadow:var(--e3);display:flex;flex-direction:column;
+           transform:translateX(102%);transition:transform var(--dur-2) var(--ease)}
+  :root.light .qdrawer{background:#fff}
+  .qdrawer.open{transform:none}
+  .qdrawer header{display:flex;align-items:center;gap:10px;padding:14px 16px;
+                  border-bottom:1px solid var(--border-soft);flex:0 0 auto}
+  .qdrawer header h2{font-size:14px;margin:0;font-weight:600}
+  .qdrawer header .sub{font-size:11.5px;color:var(--mut)}
+  .qdrawer .qbody{flex:1;overflow-y:auto;padding:10px 12px 24px}
+  .qdrawer .qfoot{flex:0 0 auto;border-top:1px solid var(--border-soft);
+                  padding:10px 14px;display:flex;gap:8px;align-items:center}
+  .qbackdrop{position:fixed;inset:0;z-index:59;background:rgba(0,0,0,.35);
+             opacity:0;pointer-events:none;transition:opacity var(--dur-2) var(--ease)}
+  .qbackdrop.open{opacity:1;pointer-events:auto}
+
+  .qrow{border:1px solid var(--border-soft);border-radius:var(--r-md);padding:10px 11px;
+        margin-bottom:8px;background:var(--surface-2)}
+  .qrow.run{border-color:var(--accent-ring);background:var(--accent-soft)}
+  .qrow.err{border-color:var(--danger);background:var(--danger-soft)}
+  .qrow.done{opacity:.62}
+  .qrow .qtop{display:flex;align-items:center;gap:8px}
+  .qrow .qkind{font-size:10.5px;font-weight:650;letter-spacing:.04em;text-transform:uppercase;
+               color:var(--mut-2);flex:0 0 auto}
+  .qrow .qlab{flex:1;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .qrow .qx{background:none;border:0;color:var(--mut);cursor:pointer;font-size:15px;
+            line-height:1;padding:2px 4px;border-radius:6px}
+  .qrow .qx:hover{color:var(--danger);background:var(--danger-soft)}
+  .qrow .qmeta{display:flex;flex-wrap:wrap;gap:4px 10px;margin-top:5px;
+               font-size:11px;color:var(--mut);font-variant-numeric:tabular-nums}
+  .qrow .qmeta b{color:var(--ink);font-weight:600}
+  .qbar{height:4px;border-radius:3px;background:var(--surface-3);margin-top:7px;overflow:hidden}
+  .qbar>i{display:block;height:100%;background:var(--accent);border-radius:3px;
+          transition:width var(--dur-2) var(--ease)}
+  .qtag{font-size:10px;padding:1px 6px;border-radius:var(--r-full);font-weight:600}
+  .qtag.hoist{background:var(--accent-soft);color:var(--accent-hover)}
+  .qtag.pin{background:var(--danger-soft);color:var(--danger)}
+  .qtag.wait{background:var(--surface-3);color:var(--mut)}
+  .qtag.now{background:var(--success-soft);color:var(--success)}
+  .qempty{color:var(--mut);font-size:12.5px;padding:22px 6px;text-align:center}
+  .qmove{background:none;border:0;color:var(--mut-2);cursor:pointer;padding:0 3px;font-size:11px}
+  .qmove:hover{color:var(--ink)}
+
+  /* pin control (Home) — the escape hatch out of queue scheduling */
+  .pinrow{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:10px}
+  .pinrow select{flex:1;min-width:170px}
+  .pinned-note{font-size:11.5px;color:var(--warn);margin-top:8px}
+
+  /* ---- Language workspace + artifact panel -------------------------------
+     The Language tab can write real files; this is where you see them. Chat
+     keeps its reading width, the artifact panel takes the rest. */
+  .langsplit{flex:1;min-height:0;display:flex;width:100%}
+  .langsplit .chatwrap{margin:0 auto}
+  .langsplit.open .chatwrap{max-width:none;margin:0;flex:1 1 46%;min-width:0;padding-right:0}
+  .artifact{flex:1 1 54%;min-width:0;display:flex;flex-direction:column;
+            border-left:1px solid var(--border-soft);margin-left:18px;padding:18px 26px 20px 18px}
+  .artifact.hide{display:none}
+  .artifact .ahead{flex:0 0 auto;display:flex;align-items:center;gap:9px;margin-bottom:10px}
+  .artifact .ahead h2{font-size:13.5px;margin:0;font-weight:600}
+  .artifact .ahead .sub{font-size:11.5px;color:var(--mut)}
+  .afiles{flex:0 0 auto;display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;
+          max-height:96px;overflow-y:auto}
+  .afile{display:flex;align-items:center;gap:6px;padding:5px 10px;border-radius:var(--r-full);
+         border:1px solid var(--border-soft);background:var(--surface-2);cursor:pointer;
+         font-size:12px;font-family:var(--mono);color:var(--mut);white-space:nowrap}
+  .afile:hover{background:var(--surface-3);color:var(--ink)}
+  .afile.on{border-color:var(--accent-ring);background:var(--accent-soft);color:var(--ink)}
+  .afile .asz{font-size:10.5px;color:var(--mut-2);font-family:var(--font)}
+  .atools{flex:0 0 auto;display:flex;align-items:center;gap:7px;margin-bottom:9px;flex-wrap:wrap}
+  .atools .seg{display:flex;border:1px solid var(--border-soft);border-radius:var(--r-sm);overflow:hidden}
+  .atools .seg button{border:0;background:var(--surface-2);color:var(--mut);font-size:12px;
+                      padding:5px 12px;cursor:pointer}
+  .atools .seg button.active{background:var(--accent-soft);color:var(--ink)}
+  .atools .spacer{flex:1}
+  .atools .dirty{font-size:11.5px;color:var(--warn)}
+  .abody{flex:1;min-height:0;border:1px solid var(--border-soft);border-radius:var(--r-md);
+         overflow:hidden;background:var(--surface-2);position:relative}
+  .abody iframe{width:100%;height:100%;border:0;background:#fff}
+  .abody img{max-width:100%;max-height:100%;display:block;margin:auto;object-fit:contain}
+  .abody textarea{width:100%;height:100%;border:0;border-radius:0;resize:none;
+                  font-family:var(--mono);font-size:12.5px;line-height:1.6;padding:12px 14px;
+                  background:transparent;color:var(--ink)}
+  .abody pre{margin:0;height:100%;overflow:auto;padding:12px 14px;
+             font-family:var(--mono);font-size:12.5px;line-height:1.6;white-space:pre-wrap}
+  .aempty{display:flex;flex-direction:column;align-items:center;justify-content:center;
+          height:100%;gap:8px;color:var(--mut);font-size:12.5px;text-align:center;padding:24px}
+  .aempty b{color:var(--ink);font-size:13.5px;font-weight:600}
+  .aempty svg{width:34px;height:34px;opacity:.5}
+  /* file chips inside a chat reply */
+  .mfiles{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
+  .mfile{font-family:var(--mono);font-size:11.5px;padding:3px 9px;border-radius:var(--r-full);
+         background:var(--success-soft);color:var(--success);border:0;cursor:pointer}
+  .mfile:hover{filter:brightness(1.15)}
+  .mfile.edited{background:var(--accent-soft);color:var(--accent-hover)}
+  .filesbtn{display:flex;align-items:center;gap:6px}
+
+  /* ---- conversation list --------------------------------------------------
+     Fixed width, not a share of the split: it holds titles, and a column that
+     grows with the window only makes the chat itself narrower for nothing. */
+  .chats{flex:0 0 232px;min-width:0;display:flex;flex-direction:column;
+         border-right:1px solid var(--border-soft);margin-right:18px;
+         padding:18px 14px 18px 26px}
+  .chats.hide{display:none}
+  .chats .ahead{flex:0 0 auto;display:flex;align-items:center;gap:8px;margin-bottom:10px}
+  .chats .ahead h2{font-size:13.5px;margin:0;font-weight:600}
+  .chlist{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:3px}
+  .chrow{display:block;width:100%;text-align:left;border:1px solid transparent;
+         background:transparent;border-radius:var(--r-sm);padding:7px 9px;cursor:pointer;
+         color:var(--mut);position:relative}
+  .chrow:hover{background:var(--surface-2);color:var(--ink)}
+  .chrow.on{background:var(--accent-soft);border-color:var(--accent-ring);color:var(--ink)}
+  .chrow .cht{font-size:12.5px;line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;
+              -webkit-box-orient:vertical;overflow:hidden;padding-right:34px}
+  .chrow .chm{font-size:10.5px;color:var(--mut-2);margin-top:3px}
+  .chrow .chx{position:absolute;top:5px;right:5px;display:none;gap:2px}
+  .chrow:hover .chx,.chrow.on .chx{display:flex}
+  .chrow .chx button{border:0;background:transparent;color:var(--mut-2);cursor:pointer;
+                     font-size:12px;line-height:1;padding:3px 4px;border-radius:4px}
+  .chrow .chx button:hover{background:var(--surface-3);color:var(--ink)}
+  .chempty{color:var(--mut-2);font-size:12px;line-height:1.6;padding:10px 2px}
+  .chnew{width:100%;margin-bottom:9px;justify-content:center}
+
+  @media (max-width:1100px){
+    .langsplit.open{flex-direction:column}
+    .langsplit.open .chatwrap{flex:1 1 auto;padding:0 26px}
+    .artifact{margin:0;border-left:0;border-top:1px solid var(--border-soft);
+              padding:14px 26px 18px;flex:1 1 auto;min-height:280px}
+    /* The list is navigation, not content — on a narrow window it costs more than
+       it gives, so it collapses rather than stacking above the conversation. */
+    .chats{display:none}
+  }
 </style>
 </head>
 <body>
@@ -11317,6 +13482,10 @@ if __name__ == "__main__":
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
           <span>Sprites</span>
         </div>
+        <div class="navitem" data-tab="mesh3d" data-title="Image → 3D — Hunyuan3D" style="--ico:var(--hue-image)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 3 7v10l9 5 9-5V7z"/><path d="M3 7l9 5 9-5"/><path d="M12 12v10"/></svg>
+          <span>Image → 3D</span>
+        </div>
       </div>
 
       <div class="navgroup">
@@ -11344,6 +13513,10 @@ if __name__ == "__main__":
         <div class="navitem" data-tab="split" data-title="Track Splitter" style="--ico:var(--hue-music)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3v18M18 3v18"/><path d="M9 7h6M9 12h6M9 17h6"/></svg>
           <span>Track Splitter</span>
+        </div>
+        <div class="navitem" data-tab="sfx" data-title="Sound Effects — Stable Audio 3 Small SFX" style="--ico:var(--hue-music)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M19 5a9 9 0 0 1 0 14"/></svg>
+          <span>Sound Effects</span>
         </div>
       </div>
 
@@ -11384,17 +13557,38 @@ if __name__ == "__main__":
         <div class="gpubar"><div id="gpuFill"></div></div>
         <span id="gpuText">—</span>
       </div>
-      <div class="modelpill" title="The model currently resident in VRAM">
+      <div class="modelpill" title="The model the queue currently has resident in VRAM">
         <span class="lab">Loaded</span>
         <span class="gdot" id="gModelDot"></span>
         <span id="gModelText">No model loaded</span>
-        <button class="pill-stop hide" id="gStop" onclick="globalStop()">Stop</button>
+        <button class="pill-stop hide" id="gStop" onclick="unpinModel()" title="Release the pinned model">Unpin</button>
       </div>
+      <button class="qbtn idle" id="qBtn" onclick="qToggle()" title="Job queue">
+        <span class="qspin hide" id="qSpin"></span>
+        <span>Queue</span><span class="qn" id="qCount">0</span>
+        <span class="qeta" id="qEta"></span>
+      </button>
       <button class="topbtn" id="cmdkBtn" title="Command palette"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg><span>Search</span><span class="kbd">Ctrl K</span></button>
       <button class="icobtn" id="themeBtn" title="Toggle light / dark" onclick="toggleTheme()" aria-label="Toggle theme">
         <svg id="themeIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/></svg>
       </button>
     </header>
+
+    <div class="qbackdrop" id="qBackdrop" onclick="qToggle(false)"></div>
+    <aside class="qdrawer" id="qDrawer" aria-label="Job queue">
+      <header>
+        <div style="flex:1">
+          <h2>Job queue</h2>
+          <div class="sub" id="qSub">nothing queued</div>
+        </div>
+        <button class="qx" onclick="qToggle(false)" title="Close" style="font-size:20px">&times;</button>
+      </header>
+      <div class="qbody" id="qBody"></div>
+      <div class="qfoot">
+        <button class="ghost" onclick="qClear('finished')">Clear finished</button>
+        <button class="ghost" onclick="qClear('pending')">Cancel all pending</button>
+      </div>
+    </aside>
 
     <div class="views">
 
@@ -11410,11 +13604,21 @@ if __name__ == "__main__":
           </div>
 
           <div class="card">
-            <div class="card-head"><span class="cico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M7 20h10M9 16v4M15 16v4"/></svg></span><div><h2>Model status</h2><div class="sub">One model fits in 16 GB at a time</div></div></div>
+            <div class="card-head"><span class="cico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M7 20h10M9 16v4M15 16v4"/></svg></span><div><h2>Model status</h2><div class="sub">One model fits in 16 GB at a time — the queue loads and frees them for you</div></div></div>
             <div class="home-status">
               <span class="big"><span class="gdot" id="homeDot"></span><span id="homeModelText">No model loaded</span></span>
-              <button class="stop hide" id="homeStop" onclick="globalStop()">Stop &amp; free VRAM</button>
+              <button class="stop hide" id="homeStop" onclick="unpinModel()">Unpin</button>
             </div>
+            <p class="note" style="margin-top:10px">Every tab adds work to one queue. You don&rsquo;t need to load anything first &mdash; jobs that need the same model are run together, and the queue swaps models between them.</p>
+            <div class="pinrow">
+              <select id="pinPick">
+                <option value="">Pin a model (optional)…</option>
+              </select>
+              <button class="ghost" id="pinBtn" onclick="pinModel()">Pin</button>
+              <button class="ghost" id="ramBtn" onclick="reclaimRam()" title="Restart ComfyUI to give its cached weights back to system RAM">Reclaim RAM</button>
+            </div>
+            <p class="note" style="margin-top:6px">Pinning keeps one model resident for rapid iteration on a single tab. Queued work that needs a different model waits until you unpin.</p>
+            <div class="pinned-note hide" id="pinNote"></div>
           </div>
 
           <div class="view-head" style="margin:24px 0 4px"><h1 style="font-size:15px">Jump in</h1></div>
@@ -11440,13 +13644,22 @@ if __name__ == "__main__":
 
       <!-- ===================== LANGUAGE (chat) ===================== -->
       <section class="panel" data-panel="lang">
+        <div class="langsplit" id="langSplit">
+        <aside class="chats hide" id="chPanel" aria-label="Conversations">
+          <div class="ahead">
+            <div style="flex:1"><h2>Conversations</h2></div>
+            <button class="copybtn" onclick="chToggle(false)" title="Hide the list">✕</button>
+          </div>
+          <button class="copybtn chnew" onclick="chatNew()" title="Start a fresh conversation">✦ New chat</button>
+          <div class="chlist" id="chList"></div>
+        </aside>
         <div class="chatwrap">
           <div class="hero chathead">
             <span class="hico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V5h16v2"/><path d="M9 19h6"/><path d="M12 5v14"/></svg></span>
-            <div><h1>Language</h1><div class="tag">Chat with your local model — code, research &amp; vision</div></div>
+            <div><h1>Language</h1><div class="tag">Chat, and let it write real files you can preview and edit</div></div>
             <div class="loadbar">
-              <button class="load" id="langLoad" onclick="loadModel('lang')">Load model</button>
-              <button class="stop hide" id="langStop" onclick="stopModel('lang')">Stop model</button>
+              <button class="copybtn filesbtn" onclick="chToggle()" title="Past conversations — pick one up where you left it">💬 Chats <span id="chCount">0</span></button>
+              <button class="copybtn filesbtn" onclick="wsToggle()" title="Show the files this chat has made">📄 Files <span id="wsCount">0</span></button>
               <span class="loadstat" id="langStat"><span class="dot"></span>not loaded</span>
             </div>
           </div>
@@ -11454,15 +13667,15 @@ if __name__ == "__main__":
             <div class="chatempty" id="llmEmpty">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.4 8.4 0 0 1-8.5 8.3 8.9 8.9 0 0 1-3.7-.8L3 20l1.1-4.4a8.1 8.1 0 0 1-1.1-4.1A8.4 8.4 0 0 1 11.5 3a8.4 8.4 0 0 1 9.5 8.5z"/></svg>
               <b>Ask your local model anything</b>
-              Replies never leave this machine. Recent turns are folded back in, so follow-ups keep their context.
+              Replies never leave this machine. Ask for a page, a script or a document and it writes the real file — it appears on the right, where you can preview, edit and save it.
               <div class="suggest">
+                <button type="button" class="copybtn" onclick="chatSuggest(this)">Build a single-page HTML pomodoro timer</button>
+                <button type="button" class="copybtn" onclick="chatSuggest(this)">Write a Python script that renames files by date</button>
                 <button type="button" class="copybtn" onclick="chatSuggest(this)">Write a regex that matches UK postcodes</button>
-                <button type="button" class="copybtn" onclick="chatSuggest(this)">Summarise the plot of Hamlet in 5 lines</button>
-                <button type="button" class="copybtn" onclick="chatSuggest(this)">Explain VRAM like I'm five</button>
               </div>
             </div>
           </div>
-          <fieldset id="langFs" disabled>
+          <fieldset id="langFs">
             <div class="composer">
               <div class="copts">
                 <select id="llmTask" title="Changing task needs a reload — different model">
@@ -11488,6 +13701,33 @@ if __name__ == "__main__":
             </div>
           </fieldset>
         </div>
+
+        <aside class="artifact hide" id="wsPanel">
+          <div class="ahead">
+            <div style="flex:1">
+              <h2>Workspace</h2>
+              <div class="sub" id="wsSub">files this chat has made</div>
+            </div>
+            <button class="copybtn" onclick="wsNewFile()" title="Create an empty file">✚ New</button>
+            <button class="copybtn" onclick="wsToggle(false)" title="Hide the panel">✕</button>
+          </div>
+          <div class="afiles" id="wsFiles"></div>
+          <div class="atools" id="wsTools">
+            <div class="seg" id="wsViewSeg">
+              <button type="button" id="wsViewPrev" onclick="wsSetView('preview')">Preview</button>
+              <button type="button" id="wsViewCode" onclick="wsSetView('code')">Code</button>
+            </div>
+            <span class="dirty hide" id="wsDirty">unsaved changes</span>
+            <span class="spacer"></span>
+            <button class="copybtn" onclick="wsSaveOpen()" title="Save your edits (Ctrl+S)">💾 Save</button>
+            <a class="copybtn" id="wsDl" download href="#" title="Download this file">⭳ Save as…</a>
+            <a class="copybtn" id="wsOpen" target="_blank" href="#" title="Open in a new tab">↗ Open</a>
+            <button class="copybtn" onclick="wsRenameOpen()" title="Rename">✎</button>
+            <button class="copybtn" onclick="wsDeleteOpen()" title="Delete this file">🗑</button>
+          </div>
+          <div class="abody" id="wsBody"></div>
+        </aside>
+        </div>
       </section>
 
       <!-- ===================== IMAGE: GENERATE ===================== -->
@@ -11497,8 +13737,6 @@ if __name__ == "__main__":
             <span class="hico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.6"/><path d="M21 15l-5-5L5 21"/></svg></span>
             <div><h1>Generate</h1><div class="tag">Text → image · FLUX.2 Klein, entirely on your GPU</div></div>
             <div class="loadbar">
-              <button class="load" id="genLoad" onclick="loadModel('gen')">Load model</button>
-              <button class="stop hide" id="genStop" onclick="stopModel('gen')">Stop model</button>
               <span class="loadstat" id="genStat"><span class="dot"></span>not loaded</span>
             </div>
           </div>
@@ -11508,7 +13746,7 @@ if __name__ == "__main__":
                 <div class="field"><label>Model <span class="note">(load applies to Generate &amp; Edit)</span></label>
                   <select id="imgModel" onchange="reeval()"><option value="base4b">Base 4B (Apache, commercial-safe)</option><option value="miraclein9b">Miraclein 9B (uncensored · personal art)</option></select>
                 </div>
-                <fieldset id="genFs" disabled>
+                <fieldset id="genFs">
                   <div class="field"><label>Prompt</label>
                     <textarea id="imgPrompt" style="min-height:120px" placeholder="a renaissance oil painting of … , chiaroscuro, museum quality"></textarea>
                   </div>
@@ -11560,8 +13798,6 @@ if __name__ == "__main__":
             <span class="hico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V9M9 20V4M14 20v-7M19 20v-11"/><circle cx="4" cy="20" r="1.4"/><circle cx="9" cy="20" r="1.4"/><circle cx="14" cy="20" r="1.4"/><circle cx="19" cy="20" r="1.4"/></svg></span>
             <div><h1>Composer</h1><div class="tag">Set it up, arrange it, export it — planned by your GPU's LLM, played by your CPU's sampler</div></div>
             <div class="loadbar">
-              <button class="load" id="coLoad" onclick="loadModel('composer')">Load planner</button>
-              <button class="stop hide" id="coStop" onclick="stopModel('composer')">Stop planner</button>
               <span class="loadstat" id="coStat"><span class="dot"></span>not loaded</span>
             </div>
           </div>
@@ -11712,15 +13948,13 @@ if __name__ == "__main__":
             <span class="hico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></span>
             <div><h1>Music Generation</h1><div class="tag">Full songs &amp; instrumentals · ACE-Step 3.5B on your GPU</div></div>
             <div class="loadbar">
-              <button class="load" id="muLoad" onclick="loadModel('music')">Load model</button>
-              <button class="stop hide" id="muStop" onclick="stopModel('music')">Stop model</button>
               <span class="loadstat" id="muStat"><span class="dot"></span>not loaded</span>
             </div>
           </div>
           <div class="ws">
             <div class="ws-ctl">
               <div class="card">
-            <fieldset id="muFs" disabled>
+            <fieldset id="muFs">
               <div class="field"><label>Style tags <span class="note">— genres, moods, instruments, tempo (comma separated)</span></label>
                 <textarea id="muTags" style="min-height:64px" placeholder="synth-pop, electronic, 128 bpm, energetic, female vocals, catchy chorus"></textarea>
                 <div class="tagchips">
@@ -12059,8 +14293,6 @@ if __name__ == "__main__":
             <span class="hico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></span>
             <div><h1>Edit</h1><div class="tag">Remove · reframe · recompose — reference-guided editing</div></div>
             <div class="loadbar">
-              <button class="load" id="editLoad" onclick="loadModel('edit')">Load model</button>
-              <button class="stop hide" id="editStop" onclick="stopModel('edit')">Stop model</button>
               <span class="loadstat" id="editStat"><span class="dot"></span>not loaded</span>
             </div>
           </div>
@@ -12070,7 +14302,7 @@ if __name__ == "__main__":
                 <div class="field"><label>Model</label>
                   <select id="edModel" onchange="reeval()"><option value="base4b">Base 4B (Apache, commercial-safe)</option><option value="miraclein9b">Miraclein 9B (uncensored · personal art)</option></select>
                 </div>
-                <fieldset id="editFs" disabled>
+                <fieldset id="editFs">
                   <div class="field"><label>Source image(s) — up to 4 (multi-reference)</label>
                     <label class="filedrop"><input type="file" id="edImgs" accept="image/*" multiple onchange="edPreview()"><span class="filedrop-name"></span></label>
                     <div class="thumbs" id="edThumbs"></div>
@@ -12124,8 +14356,6 @@ if __name__ == "__main__":
             <span class="hico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span>
             <div><h1>Sprite Studio</h1><div class="tag">One reference image → style-matched 2D game sprites &amp; sheets</div></div>
             <div class="loadbar">
-              <button class="load" id="spLoad" onclick="loadModel('sprite')">Load model</button>
-              <button class="stop hide" id="spStop" onclick="stopModel('sprite')">Stop model</button>
               <span class="loadstat" id="spStat"><span class="dot"></span>not loaded</span>
             </div>
           </div>
@@ -12135,7 +14365,7 @@ if __name__ == "__main__":
                 <div class="field"><label>Model <span class="note">(shared with Generate &amp; Edit)</span></label>
                   <select id="spModel" onchange="reeval()"><option value="base4b">Base 4B (Apache, commercial-safe)</option><option value="miraclein9b">Miraclein 9B (uncensored · personal art)</option></select>
                 </div>
-                <fieldset id="spFs" disabled>
+                <fieldset id="spFs">
                   <div class="field"><label>Reference image — defines the character &amp; style</label>
                     <label class="filedrop"><input type="file" id="spRef" accept="image/*" onchange="spRefPreview()"><span class="filedrop-name"></span></label>
                     <div class="thumbs" id="spRefThumb"></div>
@@ -12215,21 +14445,143 @@ if __name__ == "__main__":
       </section>
 
       <!-- ===================== VIDEO (MiniMax H3) ===================== -->
+      <section class="panel" data-panel="sfx">
+        <div class="pagewrap">
+          <div class="hero" style="--tone:var(--hue-music)">
+            <span class="hico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M19 5a9 9 0 0 1 0 14"/></svg></span>
+            <div><h1>Sound Effects</h1><div class="tag">Foley, impacts and ambience from a description · Stable Audio 3 SFX</div></div>
+          </div>
+          <div class="ws">
+            <div class="ws-ctl">
+              <div class="card">
+                <fieldset id="sfxFs">
+                  <div class="field"><label>The sound</label>
+                    <textarea id="sfxPrompt" style="min-height:90px" placeholder="heavy wooden door creaking slowly open in a stone hallway, groaning hinges building then stopping with a dull thud, close-mic, dry"></textarea>
+                    <div class="note">Name the <b>source</b>, its <b>material</b>, the <b>space</b> it is in, and — the one that matters most — how it <b>changes over time</b>: the attack, the decay, what happens after. "Shattering with an instant sharp attack, then shards scattering to a stop" gets you a smash; "a bottle breaking" gets you a tap.</div>
+                  </div>
+                  <div class="field"><label>Length <span class="note">(seconds)</span></label>
+                    <input type="number" id="sfxSeconds" value="5" min="1" max="190" step="1">
+                    <div class="note">Match the length to the event: <b>impacts and clicks 1–3s</b>, <b>footsteps and actions 3–6s</b>, <b>ambience 6–15s</b>. Asking for a five-second single impact hands the model four seconds it has to fill with something.</div>
+                  </div>
+                  <div class="field"><label>Takes</label>
+                    <input type="number" id="sfxTakes" value="2" min="1" max="8" step="1">
+                    <div class="note">Picking between takes is the whole workflow for foley.</div>
+                  </div>
+                  <details><summary>Advanced</summary>
+                    <div class="field"><label>Seed <span class="note">(-1 = random)</span></label><input type="number" id="sfxSeed" value="-1"></div>
+                    <div class="note">There is no step count or guidance strength here on purpose: Stable Audio 3 is a distilled model with a baked-in 8-step schedule at guidance 1.0. Raising steps does nothing, and because guidance is off, a negative prompt has no effect — say what you want, not what you don't.</div>
+                  </details>
+                  <button class="go" id="sfxGo" onclick="runSFX()">✦ Generate sound</button>
+                  <div class="status" id="sfxStatus"></div>
+                </fieldset>
+              </div>
+            </div>
+            <div class="ws-out">
+              <div class="stage" id="sfxStage" style="--tone:var(--hue-music);min-height:300px">
+                <div class="empty" id="sfxEmpty">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M19 5a9 9 0 0 1 0 14"/></svg>
+                  <b>Your takes appear here</b>
+                  Describe a sound, then Generate.
+                </div>
+                <div id="sfxOut" class="hide" style="width:100%;display:flex;flex-direction:column;gap:12px"></div>
+              </div>
+              <div class="outbar"><div class="meta hide" id="sfxMeta"></div></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" data-panel="mesh3d">
+        <div class="pagewrap">
+          <div class="hero" style="--tone:var(--hue-image)">
+            <span class="hico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 3 7v10l9 5 9-5V7z"/><path d="M3 7l9 5 9-5"/><path d="M12 12v10"/></svg></span>
+            <div><h1>Image → 3D</h1><div class="tag">One reference image becomes a 3D mesh · Hunyuan3D 2.1</div></div>
+          </div>
+          <div class="ws">
+            <div class="ws-ctl">
+              <div class="card">
+                <fieldset id="m3Fs">
+                  <div class="field"><label>Reference image</label>
+                    <label class="filedrop"><input type="file" id="m3File" accept="image/*" onchange="m3FilePick()"><span class="filedrop-name"></span></label>
+                    <div class="note">The same kind of image Sprite Studio takes. A clean background and a clear silhouette matter more than resolution.</div>
+                  </div>
+                  <div class="field"><label class="chk"><input type="checkbox" id="m3NoBg" checked> Remove the background first</label>
+                    <div class="note">Leave this on. Hunyuan3D rebuilds whatever surface it is shown — a character on a plain backdrop comes back as the <i>backdrop</i>, a flat slab, no matter how you crop it. Cutting the subject out first is the difference between a mesh and a wall.</div>
+                  </div>
+                  <div class="field"><label>Framing</label>
+                    <select id="m3Crop">
+                      <option value="center">Crop to centre square</option>
+                      <option value="none">Use the whole image</option>
+                    </select>
+                    <div class="note">Pick the whole image when the subject already sits alone on a clear background — cropping can cut a limb off.</div>
+                  </div>
+                  <div class="field"><label>Shape detail</label>
+                    <select id="m3Res">
+                      <option value="3072">Standard — 3072</option>
+                      <option value="1536">Fast — 1536</option>
+                      <option value="4096">Fine — 4096 (slower)</option>
+                    </select>
+                    <div class="note">How much room the shape gets to exist in. Dropping this far below 3072 does not give a coarse model, it gives an empty one.</div>
+                  </div>
+                  <details><summary>Advanced</summary>
+                    <div class="field"><label>Mesh density <span class="note">(octree)</span></label>
+                      <select id="m3Octree"><option value="256">256</option><option value="192">192</option><option value="320">320</option></select>
+                      <div class="note">Triangle count, not shape detail. Raising it on a coarse sample just smooths the same blob.</div>
+                    </div>
+                    <div class="field"><label>Surface threshold</label>
+                      <input type="number" id="m3Thresh" value="0.6" min="0.1" max="0.95" step="0.05">
+                      <div class="note">Lower catches thin parts — a sword, a tail — but brings noise with them.</div>
+                    </div>
+                    <div class="field"><label>Steps</label><input type="number" id="m3Steps" value="30" min="10" max="100" step="5"></div>
+                    <div class="field"><label>Seed <span class="note">(-1 = random)</span></label><input type="number" id="m3Seed" value="-1"></div>
+                  </details>
+                  <button class="go" id="m3Go" onclick="runMesh3D()">✦ Build mesh</button>
+                  <div class="status" id="m3Status"></div>
+                  <div class="note">Geometry only — the mesh comes out untextured, and this tab does not texture it. Take the <code>.glb</code> into Blender for that.</div>
+                </fieldset>
+              </div>
+            </div>
+            <div class="ws-out">
+              <div class="stage" id="m3Stage" style="--tone:var(--hue-image);min-height:300px">
+                <div class="empty" id="m3Empty">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 3 7v10l9 5 9-5V7z"/><path d="M3 7l9 5 9-5"/><path d="M12 12v10"/></svg>
+                  <b>Your mesh appears here</b>
+                  Drop in a reference image, then Build mesh.
+                </div>
+                <div id="m3Out" class="hide" style="width:100%">
+                  <canvas id="m3Canvas" style="width:100%;height:420px;display:block;border-radius:10px;cursor:grab;touch-action:none"></canvas>
+                  <div class="m3bar">
+                    <button type="button" class="copybtn" onclick="m3ResetView()">↺ Reset view</button>
+                    <button type="button" class="copybtn" onclick="m3ToggleShading()">◑ Shading</button>
+                    <span class="spacer"></span>
+                    <img id="m3Ref" alt="reference" title="the image this was built from">
+                  </div>
+                  <div class="note" id="m3Done"></div>
+                </div>
+              </div>
+              <div class="outbar">
+                <div class="meta hide" id="m3Meta"></div>
+                <span class="spacer"></span>
+                <a class="copybtn hide" id="m3Dl" download>⭳ Save .glb</a>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section class="panel" data-panel="video">
         <div class="view view-wide">
           <div class="hero">
             <span class="hico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="14" height="14" rx="2"/><path d="m22 8-6 4 6 4z"/></svg></span>
             <div><h1>Video</h1><div class="tag">MiniMax H3 — video <b>with native stereo audio</b>, generated together in one pass</div></div>
             <div class="loadbar">
-              <button class="load" id="vidLoad" onclick="loadModel('video')">Load model</button>
-              <button class="stop hide" id="vidStop" onclick="stopModel('video')">Stop model</button>
               <span class="loadstat" id="vidStat"><span class="dot"></span>not loaded</span>
             </div>
           </div>
           <div class="ws">
             <div class="ws-ctl">
               <div class="card">
-                <fieldset id="vidFs" disabled>
+                <fieldset id="vidFs">
                   <div class="field"><label>What to make</label><br>
                     <div class="seg" id="vidModeSeg">
                       <button type="button" class="active" data-mode="t2v" onclick="vidSetMode('t2v')">Text → video</button>
@@ -12397,15 +14749,20 @@ if __name__ == "__main__":
             <span class="hico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/></svg></span>
             <div><h1>Speech → Text</h1><div class="tag">Transcribe audio or your mic · Parakeet-TDT</div></div>
             <div class="loadbar">
-              <button class="load" id="sttLoad" onclick="loadModel('stt')">Load model</button>
-              <button class="stop hide" id="sttStop" onclick="stopModel('stt')">Stop model</button>
               <span class="loadstat" id="sttStat"><span class="dot"></span>not loaded</span>
             </div>
           </div>
           <div class="ws">
             <div class="ws-ctl">
               <div class="card">
-                <fieldset id="sttFs" disabled>
+                <div class="field"><label>Model <span class="note">(changing this needs a reload)</span></label>
+                  <select id="sttVariant" onchange="reeval()">
+                    <option value="v2">Parakeet v2 — English only</option>
+                    <option value="v3">Parakeet v3 — 25 languages, auto-detect</option>
+                  </select>
+                  <div class="note">v2 punctuates English narration a little more conservatively and writes numerals as digits; v3 is faster and detects the language on its own.</div>
+                </div>
+                <fieldset id="sttFs">
                   <div class="field"><label>Audio file (wav / mp3 / m4a)</label>
                     <label class="filedrop"><input type="file" id="sttFile" accept="audio/*" onchange="sttFilePick()"><span class="filedrop-name"></span></label>
                   </div>
@@ -12444,8 +14801,6 @@ if __name__ == "__main__":
             <span class="hico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M19 5a9 9 0 0 1 0 14"/></svg></span>
             <div><h1>Text → Speech</h1><div class="tag">54 Kokoro narrators · Chatterbox voice cloning</div></div>
             <div class="loadbar">
-              <button class="load" id="ttsLoad" onclick="loadModel('tts')">Load model</button>
-              <button class="stop hide" id="ttsStop" onclick="stopModel('tts')">Stop model</button>
               <span class="loadstat" id="ttsStat"><span class="dot"></span>not loaded</span>
             </div>
           </div>
@@ -12455,11 +14810,13 @@ if __name__ == "__main__":
                 <div class="field"><label>Engine <span class="note">(changing this needs a reload)</span></label>
                   <select id="ttsEngine" onchange="ttsEngineChange();reeval()"><option value="kokoro">Kokoro (fast)</option><option value="chatterbox">Chatterbox (cloning)</option></select>
                 </div>
-                <fieldset id="ttsFs" disabled>
+                <fieldset id="ttsFs">
                   <div class="field"><label>Text</label><textarea id="ttsText" style="min-height:110px" placeholder="The line to speak…"></textarea></div>
                   <div class="field" id="ttsVoiceWrap"><label>Voice</label><select id="ttsVoice"></select></div>
                   <div class="field hide" id="ttsRefWrap"><label>Reference voice clip (5–15s wav) — required for Chatterbox</label>
-                    <label class="filedrop"><input type="file" id="ttsRef" accept="audio/*"><span class="filedrop-name"></span></label>
+                    <label class="filedrop"><input type="file" id="ttsRef" accept="audio/*" onchange="_pickName('ttsRef')"><span class="filedrop-name"></span></label>
+                    <button type="button" class="copybtn" onclick="enhanceRef('ttsRef','ttsStatus')">✦ Clean up this recording</button>
+                    <div class="note">Denoise and de-reverb before cloning. Runs on the CPU, so it will not unload the voice model.</div>
                   </div>
                   <button class="go" id="ttsGo" onclick="runTTS()">Synthesize</button>
                   <div class="status" id="ttsStatus"></div>
@@ -12508,11 +14865,9 @@ if __name__ == "__main__":
                     </div>
                   </div>
                   <div class="loadbar">
-                    <button class="load" id="vmLoad" onclick="loadModel('voicemodel')">Load model</button>
-                    <button class="stop hide" id="vmStop" onclick="stopModel('voicemodel')">Stop model</button>
                     <span class="loadstat" id="vmStat"><span class="dot"></span>not loaded</span>
                   </div>
-                  <fieldset id="vmFs" disabled>
+                  <fieldset id="vmFs">
                     <div class="field"><label>Input</label>
                       <select id="vmInput" onchange="vmInputChange()">
                         <option value="text">Type text</option>
@@ -12593,8 +14948,6 @@ if __name__ == "__main__":
             <span class="hico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5a2 2 0 0 1 2-2h13v18H6a2 2 0 0 0-2 2z"/><path d="M19 3v18"/><path d="M8 8h7M8 12h7"/></svg></span>
             <div><h1>Audiobook</h1><div class="tag">Turn a story or any text into chaptered MP3s, in any voice you have</div></div>
             <div class="loadbar">
-              <button class="load" id="abLoad" onclick="loadModel('audiobook')">Load voice</button>
-              <button class="stop hide" id="abStop" onclick="stopModel('audiobook')">Stop voice</button>
               <span class="loadstat" id="abStat"><span class="dot"></span>not loaded</span>
             </div>
           </div>
@@ -12696,8 +15049,6 @@ if __name__ == "__main__":
           <button class="rec" onclick="stOpen()">Open</button>
           <button class="rec" onclick="stDelete()">Delete</button>
           <span class="stmodel" style="display:inline-flex;align-items:center;gap:8px" title="The fiction model (koboldcpp · Cydonia-24B) — loading it frees other models from VRAM">
-            <button class="load" id="storyLoad" onclick="loadModel('story')">Load story model</button>
-            <button class="stop hide" id="storyStop" onclick="stopModel('story')">Stop model</button>
             <span class="loadstat" id="storyStat"><span class="dot"></span>not loaded</span>
           </span>
           <button class="go" id="stGenBtn" onclick="stGenerate()">✨ Generate story</button>
@@ -12811,9 +15162,13 @@ const HOME_TILES=[
   {tab:'gen',t:'Generate image',d:'FLUX.2 Klein',hue:'--hue-image',ic:'<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.6"/><path d="M21 15l-5-5L5 21"/>'},
   {tab:'edit',t:'Edit image',d:'Remove · reframe · recompose',hue:'--hue-image',ic:'<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>'},
   {tab:'sprite',t:'Sprite Studio',d:'2D game sprites & sheets',hue:'--hue-image',ic:'<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>'},
+  {tab:'mesh3d',t:'Image → 3D',d:'One image → a .glb mesh · Hunyuan3D',hue:'--hue-image',ic:'<path d="M12 2 3 7v10l9 5 9-5V7z"/><path d="M3 7l9 5 9-5"/><path d="M12 12v10"/>'},
   {tab:'video',t:'Video',d:'Video + native audio · MiniMax H3',hue:'--hue-video',ic:'<rect x="2" y="5" width="14" height="14" rx="2"/><path d="m22 8-6 4 6 4z"/>'},
   {tab:'composer',t:'Composer',d:'Arrange, mix & automate a song',hue:'--hue-music',ic:'<path d="M4 20V9M9 20V4M14 20v-7M19 20v-11"/><circle cx="4" cy="20" r="1.4"/><circle cx="9" cy="20" r="1.4"/><circle cx="14" cy="20" r="1.4"/><circle cx="19" cy="20" r="1.4"/>'},
   {tab:'music',t:'Music',d:'Songs & instrumentals · ACE-Step',hue:'--hue-music',ic:'<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>'},
+  {tab:'lullaby',t:'Lullaby',d:'Any song as a piano cover',hue:'--hue-music',ic:'<path d="M12 21a9 9 0 1 1 9-9c0 1-1 2-2.5 2S16 13 16 12a4 4 0 1 0-4 4"/>'},
+  {tab:'split',t:'Track Splitter',d:'Vocals, drums, bass, other',hue:'--hue-music',ic:'<path d="M6 3v18M18 3v18"/><path d="M9 7h6M9 12h6M9 17h6"/>'},
+  {tab:'sfx',t:'Sound Effects',d:'Foley & ambience · Stable Audio 3',hue:'--hue-music',ic:'<path d="M11 5 6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M19 5a9 9 0 0 1 0 14"/>'},
   {tab:'stt',t:'Speech → Text',d:'Parakeet transcription',hue:'--hue-voice',ic:'<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/>'},
   {tab:'tts',t:'Text → Speech',d:'Kokoro · Chatterbox',hue:'--hue-voice',ic:'<path d="M11 5 6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/>'},
   {tab:'voicestudio',t:'Voice Studio',d:'Train & use your voice',hue:'--hue-voice',ic:'<path d="M12 2a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/><path d="M19 10v1a7 7 0 0 1-14 0v-1"/><path d="M12 18v4M8 22h8"/>'},
@@ -12885,6 +15240,399 @@ function copyText(t,btn){ if(!navigator.clipboard) return; navigator.clipboard.w
 function lightbox(img){ if(!img.src) return; const lb=document.createElement('div'); lb.className='lightbox'; const i=new Image(); i.src=img.src; lb.appendChild(i); lb.onclick=()=>lb.remove(); document.body.appendChild(lb); }
 function seenStage(id){ const s=$(id); if(s&&window.innerWidth<1000) s.scrollIntoView({behavior:'smooth',block:'nearest'}); }
 
+// ---- GLB preview -----------------------------------------------------------
+// A small WebGL2 viewer, written out rather than pulling in three.js or
+// <model-viewer>. Two reasons: index.html has no external scripts at all and that is
+// worth keeping, and Hunyuan3D's output is the easiest possible case — POSITION-only
+// triangles, no materials, textures, skins or animation. A general glTF library would
+// be a megabyte of code to ignore.
+//
+// It does have to handle scale: these meshes are 200k-500k triangles and the .glb runs
+// to ~18 MB, so parsing is done straight off the ArrayBuffer with no intermediate
+// copies, and normals are computed once on load rather than per frame.
+
+const GLB = {
+  gl: null, prog: null, vao: null, count: 0, canvas: null,
+  rot: [0.5, 0.6], dist: 3.2, pan: [0, 0], centre: [0, 0, 0], radius: 1,
+  shaded: true, raf: 0,
+};
+
+function glbParse(buf) {
+  const dv = new DataView(buf);
+  if (dv.getUint32(0, true) !== 0x46546C67) throw new Error('not a .glb file');
+  let off = 12, json = null, bin = null;
+  while (off < dv.byteLength) {
+    const len = dv.getUint32(off, true), type = dv.getUint32(off + 4, true);
+    const body = off + 8;
+    if (type === 0x4E4F534A) json = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, body, len)));
+    else if (type === 0x004E4942) bin = { off: body, len };
+    off = body + len + (len % 4 ? 4 - (len % 4) : 0);
+  }
+  if (!json || !bin) throw new Error('malformed .glb — missing JSON or BIN chunk');
+
+  const view = (i) => {
+    const v = json.bufferViews[i];
+    return { off: bin.off + (v.byteOffset || 0), len: v.byteLength };
+  };
+  const read = (idx) => {
+    const a = json.accessors[idx], v = view(a.bufferView);
+    const start = v.off + (a.byteOffset || 0);
+    // 5125 = UNSIGNED_INT, 5123 = UNSIGNED_SHORT, 5126 = FLOAT
+    if (a.componentType === 5126) return new Float32Array(buf, start, a.count * 3);
+    if (a.componentType === 5125) return new Uint32Array(buf, start, a.count);
+    if (a.componentType === 5123) return new Uint16Array(buf, start, a.count);
+    throw new Error('unsupported componentType ' + a.componentType);
+  };
+
+  const prim = json.meshes[0].primitives[0];
+  const pos = read(prim.attributes.POSITION);
+  const idx = prim.indices !== undefined ? read(prim.indices) : null;
+  const acc = json.accessors[prim.attributes.POSITION];
+  return { pos, idx, min: acc.min || [-1, -1, -1], max: acc.max || [1, 1, 1] };
+}
+
+// Hunyuan3D writes no normals, so the mesh would shade flat grey without these.
+// Area-weighted vertex normals: accumulate each face normal onto its three vertices
+// (the cross product is already proportional to area, so no extra weighting needed).
+function glbNormals(pos, idx) {
+  const n = new Float32Array(pos.length);
+  const tris = idx ? idx.length : pos.length / 3;
+  for (let t = 0; t < tris; t += 3) {
+    const a = (idx ? idx[t] : t) * 3, b = (idx ? idx[t + 1] : t + 1) * 3, c = (idx ? idx[t + 2] : t + 2) * 3;
+    const ux = pos[b] - pos[a], uy = pos[b + 1] - pos[a + 1], uz = pos[b + 2] - pos[a + 2];
+    const vx = pos[c] - pos[a], vy = pos[c + 1] - pos[a + 1], vz = pos[c + 2] - pos[a + 2];
+    const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+    n[a] += nx; n[a + 1] += ny; n[a + 2] += nz;
+    n[b] += nx; n[b + 1] += ny; n[b + 2] += nz;
+    n[c] += nx; n[c + 1] += ny; n[c + 2] += nz;
+  }
+  for (let i = 0; i < n.length; i += 3) {
+    const l = Math.hypot(n[i], n[i + 1], n[i + 2]) || 1;
+    n[i] /= l; n[i + 1] /= l; n[i + 2] /= l;
+  }
+  return n;
+}
+
+const GLB_VS = `#version 300 es
+in vec3 aPos; in vec3 aNor;
+uniform mat4 uMVP; uniform mat4 uModel;
+out vec3 vNor; out vec3 vPos;
+void main(){ vNor = mat3(uModel) * aNor; vPos = aPos; gl_Position = uMVP * vec4(aPos,1.0); }`;
+
+// Clay render: a key light, a cooler fill from below-behind, and a rim term so the
+// silhouette reads against the panel. Untextured geometry is unreadable under a single
+// lambert term - everything facing away just goes black.
+const GLB_FS = `#version 300 es
+precision highp float;
+in vec3 vNor; in vec3 vPos; out vec4 frag;
+uniform bool uShaded;
+void main(){
+  vec3 n = normalize(vNor);
+  if(!uShaded){ frag = vec4(vec3(0.55) + n*0.45, 1.0); return; }
+  vec3 key  = normalize(vec3( 0.5, 0.8,  0.6));
+  vec3 fill = normalize(vec3(-0.6,-0.3, -0.4));
+  float d = max(dot(n,key),0.0)*0.85 + max(dot(n,fill),0.0)*0.25 + 0.22;
+  float rim = pow(1.0 - max(dot(n, vec3(0.0,0.0,1.0)), 0.0), 2.5) * 0.35;
+  vec3 col = vec3(0.80,0.79,0.77) * d + vec3(0.45,0.55,0.70) * rim;
+  frag = vec4(col, 1.0);
+}`;
+
+function glbCompile(gl) {
+  const mk = (t, src) => {
+    const s = gl.createShader(t); gl.shaderSource(s, src); gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+    return s;
+  };
+  const p = gl.createProgram();
+  gl.attachShader(p, mk(gl.VERTEX_SHADER, GLB_VS));
+  gl.attachShader(p, mk(gl.FRAGMENT_SHADER, GLB_FS));
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+  return p;
+}
+
+// Column-major 4x4 helpers. WebGL expects column-major and the shader uses the
+// column-vector convention (uMVP * vec4(pos,1)), so index as m[col*4 + row] and
+// compose right-to-left: MVP = P * View * Rx * Ry * T.
+function m4mul(a, b) {          // returns a * b
+  const o = new Float32Array(16);
+  for (let c = 0; c < 4; c++)
+    for (let r = 0; r < 4; r++) {
+      let v = 0;
+      for (let k = 0; k < 4; k++) v += a[k * 4 + r] * b[c * 4 + k];
+      o[c * 4 + r] = v;
+    }
+  return o;
+}
+function m4translate(x, y, z) {
+  return new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, x,y,z,1]);
+}
+function m4rotX(a) {
+  const c = Math.cos(a), s = Math.sin(a);
+  return new Float32Array([1,0,0,0, 0,c,s,0, 0,-s,c,0, 0,0,0,1]);
+}
+function m4rotY(a) {
+  const c = Math.cos(a), s = Math.sin(a);
+  return new Float32Array([c,0,-s,0, 0,1,0,0, s,0,c,0, 0,0,0,1]);
+}
+function m4perspective(fovy, aspect, near, far) {
+  const f = 1 / Math.tan(fovy / 2), nf = 1 / (near - far);
+  return new Float32Array([
+    f / aspect, 0, 0, 0,
+    0, f, 0, 0,
+    0, 0, (far + near) * nf, -1,
+    0, 0, 2 * far * near * nf, 0,
+  ]);
+}
+
+// Returns the model (rotation-only) matrix and writes MVP into `out`. Normals need
+// the rotation without the translations, which is why the two are separated.
+function glbMat(out, rot, dist, pan, centre, aspect) {
+  const R = m4mul(m4rotX(rot[0]), m4rotY(rot[1]));
+  const T = m4translate(-centre[0], -centre[1], -centre[2]);
+  const V = m4translate(pan[0], pan[1], -dist);
+  const P = m4perspective(0.9, aspect || 1, 0.01, 100);
+  const mvp = m4mul(P, m4mul(V, m4mul(R, T)));
+  out.set(mvp);
+  return R;
+}
+
+function glbDraw() {
+  const G = GLB, gl = G.gl;
+  if (!gl || !G.count) return;
+  const c = G.canvas, w = c.clientWidth, h = c.clientHeight;
+  if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+  gl.viewport(0, 0, c.width, c.height);
+  gl.clearColor(0, 0, 0, 0);
+  gl.enable(gl.DEPTH_TEST);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  gl.useProgram(G.prog);
+  const mvp = new Float32Array(16);
+  const model = glbMat(mvp, G.rot, G.dist * G.radius, G.pan, G.centre, w / Math.max(h, 1));
+  gl.uniformMatrix4fv(gl.getUniformLocation(G.prog, 'uMVP'), false, mvp);
+  gl.uniformMatrix4fv(gl.getUniformLocation(G.prog, 'uModel'), false, model);
+  gl.uniform1i(gl.getUniformLocation(G.prog, 'uShaded'), G.shaded ? 1 : 0);
+  gl.bindVertexArray(G.vao);
+  gl.drawElements(gl.TRIANGLES, G.count, G.idxType, 0);
+}
+
+function glbSchedule() {
+  cancelAnimationFrame(GLB.raf);
+  GLB.raf = requestAnimationFrame(glbDraw);
+}
+
+async function glbLoad(url) {
+  const G = GLB;
+  const c = $('m3Canvas');
+  if (!c) return;
+  G.canvas = c;
+  const gl = G.gl || c.getContext('webgl2', { antialias: true, alpha: true });
+  if (!gl) { setStatus('m3Status', 'This browser has no WebGL2, so the mesh cannot be previewed. The .glb still saves fine.', 'err'); return; }
+  G.gl = gl;
+  if (!G.prog) G.prog = glbCompile(gl);
+
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('could not load the mesh (' + res.status + ')');
+  const buf = await res.arrayBuffer();
+  const { pos, idx, min, max } = glbParse(buf);
+  const nor = glbNormals(pos, idx);
+
+  G.centre = [(min[0]+max[0])/2, (min[1]+max[1])/2, (min[2]+max[2])/2];
+  G.radius = Math.max(max[0]-min[0], max[1]-min[1], max[2]-min[2]) || 1;
+  G.dist = 2.2; G.rot = [0.15, 0.6]; G.pan = [0, 0];
+
+  if (G.vao) gl.deleteVertexArray(G.vao);
+  G.vao = gl.createVertexArray();
+  gl.bindVertexArray(G.vao);
+  const bind = (data, loc, size) => {
+    const b = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, b);
+    gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc, size, gl.FLOAT, false, 0, 0);
+  };
+  bind(pos, gl.getAttribLocation(G.prog, 'aPos'), 3);
+  bind(nor, gl.getAttribLocation(G.prog, 'aNor'), 3);
+  const ib = gl.createBuffer();
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ib);
+  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idx, gl.STATIC_DRAW);
+  G.count = idx.length;
+  G.idxType = (idx instanceof Uint32Array) ? gl.UNSIGNED_INT : gl.UNSIGNED_SHORT;
+
+  glbSchedule();
+  return { verts: pos.length / 3, tris: idx.length / 3 };
+}
+
+function glbBindControls() {
+  const c = $('m3Canvas');
+  if (!c || c.dataset.bound) return;
+  c.dataset.bound = '1';
+  let drag = null;
+  c.addEventListener('pointerdown', e => {
+    drag = { x: e.clientX, y: e.clientY, pan: e.button === 1 || e.shiftKey };
+    c.setPointerCapture(e.pointerId);
+  });
+  c.addEventListener('pointermove', e => {
+    if (!drag) return;
+    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    drag.x = e.clientX; drag.y = e.clientY;
+    if (drag.pan) { GLB.pan[0] += dx * 0.004 * GLB.dist; GLB.pan[1] -= dy * 0.004 * GLB.dist; }
+    else { GLB.rot[1] += dx * 0.01; GLB.rot[0] = Math.max(-1.5, Math.min(1.5, GLB.rot[0] + dy * 0.01)); }
+    glbSchedule();
+  });
+  const stop = e => { drag = null; try { c.releasePointerCapture(e.pointerId); } catch (_) {} };
+  c.addEventListener('pointerup', stop);
+  c.addEventListener('pointercancel', stop);
+  c.addEventListener('wheel', e => {
+    e.preventDefault();
+    GLB.dist = Math.max(0.6, Math.min(12, GLB.dist * (e.deltaY > 0 ? 1.12 : 0.89)));
+    glbSchedule();
+  }, { passive: false });
+  window.addEventListener('resize', glbSchedule);
+}
+
+function m3ResetView(){ GLB.rot = [0.15, 0.6]; GLB.dist = 2.2; GLB.pan = [0, 0]; glbSchedule(); }
+function m3ToggleShading(){ GLB.shaded = !GLB.shaded; glbSchedule(); }
+
+// ---- Sound Effects / Image-to-3D -------------------------------------------
+// Both are one-shot ComfyUI jobs rather than resident workers: they load, run and
+// exit, so there is no Load/Stop pair on these tabs. The server evicts whatever is
+// resident before starting, since each wants the whole card.
+
+function _fileAsDataURL(input){
+  return new Promise((res,rej)=>{
+    const f = input && input.files && input.files[0];
+    if(!f) return rej(new Error('choose a file first'));
+    const r = new FileReader();
+    r.onload = ()=>res(r.result);
+    r.onerror = ()=>rej(new Error('could not read that file'));
+    r.readAsDataURL(f);
+  });
+}
+function _pickName(inputId){
+  const i=$(inputId), f=i&&i.files&&i.files[0];
+  const lab=i&&i.closest('.filedrop')&&i.closest('.filedrop').querySelector('.filedrop-name');
+  if(lab) lab.textContent = f ? f.name : '';
+}
+
+// Sound effects ---------------------------------------------------------------
+async function runSFX(){
+  const prompt = ($('sfxPrompt').value||'').trim();
+  if(!prompt){ setStatus('sfxStatus','Describe the sound first.','err'); return; }
+  const body = {
+    prompt,
+    seconds:+$('sfxSeconds').value,
+    takes:+$('sfxTakes').value,
+    seed:+$('sfxSeed').value
+  };
+  $('sfxGo').disabled = true;
+  stageBusy('sfxStage', true);
+  setStatus('sfxStatus','Generating…');
+  try{
+    const r = await qRun('sfx', body, 'sfxStatus');
+    const out = $('sfxOut');
+    out.innerHTML = '';
+    (r.files||[]).forEach((f,i)=>{
+      const wrap = document.createElement('div');
+      const lab = document.createElement('div');
+      lab.className = 'note';
+      lab.textContent = 'Take ' + (i+1);
+      const a = document.createElement('audio');
+      a.controls = true; a.src = f + '?t=' + Date.now(); a.style.width='100%';
+      // The API returning 200 only means the file was written. If the browser cannot
+      // actually load it, say so here rather than leaving a dead player under a
+      // cheerful "Done" - which is exactly how a missing /sfx/ route presented.
+      a.onerror = ()=>{
+        lab.textContent = 'Take ' + (i+1) + ' — could not be played (' + f + ')';
+        lab.className = 'note err';
+        setStatus('sfxStatus','A take was generated but the browser could not load it.','err');
+      };
+      const dl = document.createElement('a');
+      dl.className='copybtn'; dl.href=a.src; dl.download=''; dl.textContent='⭳ Save take '+(i+1);
+      wrap.appendChild(lab); wrap.appendChild(a); wrap.appendChild(dl);
+      out.appendChild(wrap);
+    });
+    $('sfxEmpty').classList.add('hide');
+    out.classList.remove('hide');
+    $('sfxMeta').textContent = 'seed ' + r.seed; $('sfxMeta').classList.remove('hide');
+    setStatus('sfxStatus','Done.','ok');
+    seenStage('sfxStage');
+  }catch(e){ setStatus('sfxStatus', e.message, 'err'); }
+  finally{ $('sfxGo').disabled=false; stageBusy('sfxStage', false); }
+}
+
+// Image -> 3D -----------------------------------------------------------------
+function m3FilePick(){ _pickName('m3File'); }
+async function runMesh3D(){
+  let file;
+  try { file = await _fileAsDataURL($('m3File')); }
+  catch(e){ setStatus('m3Status', e.message, 'err'); return; }
+  const body = {
+    file,
+    nobg:$('m3NoBg').checked,
+    crop:$('m3Crop').value,
+    resolution:+$('m3Res').value,
+    octree:+$('m3Octree').value,
+    threshold:+$('m3Thresh').value,
+    steps:+$('m3Steps').value,
+    seed:+$('m3Seed').value
+  };
+  $('m3Go').disabled = true;
+  stageBusy('m3Stage', true);
+  setStatus('m3Status','Reconstructing geometry…');
+  try{
+    const r = await qRun('mesh3d', body, 'm3Status');
+    const url = r.file + '?t=' + Date.now();
+    $('m3Ref').src = file;
+    $('m3Empty').classList.add('hide');
+    $('m3Out').classList.remove('hide');
+    // The canvas has to be laid out before WebGL sizes its drawing buffer, so the
+    // panel is unhidden first and only then is the mesh loaded into it.
+    glbBindControls();
+    setStatus('m3Status', 'Loading the mesh into the preview\u2026');
+    try {
+      const info = await glbLoad(url);
+      $('m3Done').textContent = (info
+        ? info.tris.toLocaleString() + ' triangles \u00b7 drag to rotate, shift-drag to pan, scroll to zoom \u00b7 untextured, ready for Blender'
+        : 'Mesh built \u2014 save it and open it in Blender or any .glb viewer.')
+        + (r.warning ? '  — note: ' + r.warning : '');
+    } catch (err) {
+      $('m3Done').textContent = 'Mesh built, but the preview could not load it: ' + err.message;
+    }
+    const dl=$('m3Dl'); dl.href=url; dl.classList.remove('hide');
+    $('m3Meta').textContent = r.file; $('m3Meta').classList.remove('hide');
+    setStatus('m3Status','Done.','ok');
+    seenStage('m3Stage');
+  }catch(e){ setStatus('m3Status', e.message, 'err'); }
+  finally{ $('m3Go').disabled=false; stageBusy('m3Stage', false); }
+}
+
+// Reference-clip cleanup ------------------------------------------------------
+// Cloning quality is capped by the reference clip, which is whatever mic and room the
+// user had. This runs on CPU in its own env, so it does NOT evict a loaded TTS model -
+// you can clean a clip and immediately use it.
+async function enhanceRef(inputId, statusId){
+  const input = $(inputId);
+  if(!input || !input.files || !input.files[0]){
+    setStatus(statusId, 'Choose a reference clip first.', 'err'); return;
+  }
+  setStatus(statusId, 'Cleaning up the recording…');
+  try{
+    const audio = await _fileAsDataURL(input);
+    const r = await qRun('enhance', {audio}, statusId);
+    // Swap the cleaned audio back into the file input so every downstream call uses it.
+    const bin = atob(r.audio.split(',')[1]);
+    const buf = new Uint8Array(bin.length);
+    for(let i=0;i<bin.length;i++) buf[i]=bin.charCodeAt(i);
+    const dt = new DataTransfer();
+    dt.items.add(new File([buf], 'enhanced.wav', {type:'audio/wav'}));
+    input.files = dt.files;
+    _pickName(inputId);
+    setStatus(statusId, 'Cleaned — ' + r.in_db + ' dB in, ' + r.out_db + ' dB out.', 'ok');
+  }catch(e){ setStatus(statusId, e.message, 'err'); }
+}
+
+
 // ---- runtime config (model tags, incl. the configurable Unlocked tag) ------
 let CFG = {unlocked_model:'huihui_ai/gpt-oss-abliterated:20b', standard_model:'gpt-oss:20b', vision_model:'qwen3-vl:8b'};
 get('/api/config').then(c=>{CFG=c; paint();}).catch(()=>{});
@@ -12916,7 +15664,8 @@ const TABS = {
   composer:{load:'coLoad',stop:'coStop',stat:'coStat',
          key:()=>'llm:'+CFG.standard_model, params:()=>({worker:'llm',task:'research'})},
   stt:{fs:'sttFs',load:'sttLoad',stop:'sttStop',stat:'sttStat',
-       key:()=>'stt', params:()=>({worker:'stt'})},
+       key:()=>'stt:'+($('sttVariant')?$('sttVariant').value:'v2'),
+       params:()=>({worker:'stt',variant:$('sttVariant')?$('sttVariant').value:'v2'})},
   tts:{fs:'ttsFs',load:'ttsLoad',stop:'ttsStop',stat:'ttsStat',
        key:()=>'tts:'+$('ttsEngine').value, params:()=>({worker:'tts',engine:$('ttsEngine').value})},
   voicemodel:{fs:'vmFs',load:'vmLoad',stop:'vmStop',stat:'vmStat',
@@ -12928,8 +15677,8 @@ const TABS = {
          key:()=>{const e=$('abEngine').value; return e==='voice' ? 'voicemodel:'+($('abVoiceModel').value||'') : 'tts:'+e;},
          params:()=>{const e=$('abEngine').value; return e==='voice' ? {worker:'voicemodel',name:$('abVoiceModel').value} : {worker:'tts',engine:e};}},
 };
-let LOADED = null;   // current backend key
-let BUSY = false;
+let LOADED = null;   // model the queue currently has resident
+let BUSY = false;   // reserved: the queue owns loading now
 
 function prettyKey(k){
   if(!k) return 'No model loaded';
@@ -12946,68 +15695,479 @@ function paintGlobal(){
   const on=!!LOADED;
   $('gModelText').textContent = prettyKey(LOADED);
   $('gModelDot').className = 'gdot'+(on?' on':'');
-  $('gStop').classList.toggle('hide',!on); $('gStop').disabled=BUSY;
+  // Unpin is only meaningful while something is PINNED. Gating it on "a model is
+  // resident" offered an Unpin next to every model the queue had merely loaded on
+  // its own, which does nothing and reads as though the queue had been overridden.
+  $('gStop').classList.toggle('hide',!PINNED); $('gStop').disabled=BUSY;
   $('homeModelText').textContent = prettyKey(LOADED);
   $('homeDot').className = 'gdot'+(on?' on':'');
-  $('homeStop').classList.toggle('hide',!on); $('homeStop').disabled=BUSY;
+  $('homeStop').classList.toggle('hide',!PINNED); $('homeStop').disabled=BUSY;
 }
 function paint(){
+  // Tabs are never gated any more: you can queue work with nothing loaded. The
+  // per-tab line just says which model this tab's jobs will make the queue load.
   for(const [id,t] of Object.entries(TABS)){
-    const on = LOADED && LOADED===t.key();
-    if(t.fs){ const fsEl=$(t.fs); if(fsEl) fsEl.disabled = !on; }
-    $(t.load).classList.toggle('hide', on);
-    $(t.stop).classList.toggle('hide', !on);
-    $(t.load).disabled = BUSY; $(t.stop).disabled = BUSY;
-    const s=$(t.stat);
-    if(on){ s.className='loadstat on'; s.innerHTML='<span class="dot on"></span>loaded'; }
-    else if(LOADED){ s.className='loadstat'; s.innerHTML='<span class="dot"></span>another model is loaded'; }
-    else { s.className='loadstat'; s.innerHTML='<span class="dot"></span>not loaded'; }
+    const s=$(t.stat); if(!s) continue;
+    const want=t.key(), on = LOADED && LOADED===want;
+    if(on){ s.className='loadstat on'; s.innerHTML='<span class="dot on"></span>'+prettyKey(want)+' is loaded'; }
+    else { s.className='loadstat'; s.innerHTML='<span class="dot"></span>queued automatically'; }
   }
+  pinPaint();
   paintGlobal();
 }
 function reeval(){ paint(); }
 
-async function loadModel(id){
-  if(BUSY) return; BUSY=true;
-  const t=TABS[id]; const s=$(t.stat);
-  s.className='loadstat run'; s.innerHTML='<span class="dot run"></span>loading… (frees other models first)';
-  $(t.load).disabled=true; paintGlobal();
-  try{ const r=await post('/api/load',t.params()); LOADED=r.key; toast(prettyKey(LOADED)+' loaded','ok'); }
-  catch(e){ s.className='loadstat err'; s.innerHTML='<span class="dot"></span>'+e.message; toast(e.message,'err'); }
-  finally{ BUSY=false; paint(); }
+/* ---- pin: the escape hatch ------------------------------------------------
+   Normally the queue owns the GPU and swaps models between jobs. Pinning holds
+   one model resident so rapid iteration on a single tab doesn't pay a load per
+   job; queued work needing anything else waits until you unpin. */
+let PINNED=null, PIN_BUILT=false;
+function pinBuild(){
+  if(PIN_BUILT) return; PIN_BUILT=true;
+  const sel=$('pinPick'); if(!sel) return;
+  for(const [id,t] of Object.entries(TABS)){
+    try{
+      const o=document.createElement('option');
+      o.value=id; o.textContent=prettyKey(t.key());
+      sel.appendChild(o);
+    }catch(e){}
+  }
 }
-async function stopModel(id){
-  if(BUSY) return; BUSY=true; paint();
-  try{ const r=await post('/api/stop',{}); LOADED=r.key; }
-  catch(e){ /* ignore */ }
-  finally{ BUSY=false; paint(); }
+function pinPaint(){
+  const note=$('pinNote'), btn=$('pinBtn');
+  if(!note) return;
+  if(PINNED){ note.classList.remove('hide');
+    note.textContent='Pinned: '+prettyKey(PINNED)+' — queued jobs needing another model are waiting.';
+    if(btn) btn.textContent='Re-pin'; }
+  else { note.classList.add('hide'); if(btn) btn.textContent='Pin'; }
+}
+async function pinModel(){
+  const id=$('pinPick').value;
+  if(!id){ toast('Choose a model to pin','err'); return; }
+  const t=TABS[id]; if(!t) return;
+  $('pinBtn').disabled=true;
+  try{ const r=await post('/api/pin',t.params()); LOADED=r.key; PINNED=r.pinned;
+       toast(prettyKey(PINNED)+' pinned','ok'); }
+  catch(e){ toast(e.message,'err'); }
+  finally{ $('pinBtn').disabled=false; paint(); qPoll(); }
+}
+/* ComfyUI keeps a CPU-side copy of every model it loads and does not give it back
+   on unload, so after image or video work a large language model can find the RAM
+   already spoken for. This restarts ComfyUI, which is the only thing that returns
+   it. The queue also does this on its own when it is about to load a non-ComfyUI
+   model and memory is short. */
+async function reclaimRam(){
+  const b=$('ramBtn'); b.disabled=true; const was=b.textContent; b.textContent='Reclaiming…';
+  try{
+    const r=await post('/api/reclaim',{});
+    if(!r.ok) toast(r.reason||'could not reclaim','err');
+    else toast(`Reclaimed ${r.reclaimed_gb} GB — ${r.free_gb} GB free (${r.seconds}s)`,'ok');
+  }catch(e){ toast(e.message,'err'); }
+  finally{ b.disabled=false; b.textContent=was; }
+}
+async function unpinModel(){
+  try{ const r=await post('/api/unpin',{}); LOADED=r.key; PINNED=r.pinned;
+       toast('Unpinned — the queue owns the GPU again','ok'); }
+  catch(e){ toast(e.message,'err'); }
+  finally{ paint(); qPoll(); }
 }
 async function globalStop(){
-  if(BUSY||!LOADED) return; BUSY=true; paint();
-  try{ const r=await post('/api/stop',{}); LOADED=r.key; toast('Model stopped — VRAM freed','ok'); }
+  try{ const r=await post('/api/stop',{}); LOADED=r.key; PINNED=r.pinned;
+       toast('Model stopped — VRAM freed','ok'); }
   catch(e){ toast('Could not stop model','err'); }
-  finally{ BUSY=false; paint(); }
+  finally{ paint(); qPoll(); }
 }
 
-// ---- runs (only reachable when the fieldset is enabled) --------------------
+/* ================= JOB QUEUE ==============================================
+   Every tab submits here instead of driving a model itself. One poll of
+   /api/queue drives the drawer AND every tab's own progress line, replacing the
+   seven separate status pollers this file used to run. */
+let QTIMER=null, QSNAP=null, QOPEN=false;   // null until the first poll lands
+const MYJOBS={};          // job id -> {onDone,onFail,onTick} for the submitting tab
+const QKIND={};           // kind -> () => handlers, so a refresh can re-attach
+
+function fmtSecs(s){
+  if(s==null) return '—';
+  s=Math.max(0,Math.round(s));
+  if(s<60) return s+'s';
+  const m=Math.floor(s/60), r=s%60;
+  if(m<60) return m+'m '+String(r).padStart(2,'0')+'s';
+  return Math.floor(m/60)+'h '+String(m%60).padStart(2,'0')+'m';
+}
+function qEsc(t){ return String(t).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+/* One line of truth for a job's live status, used by every tab. Mirrors the
+   drawer: a measured remaining time, or an honest "measuring…". */
+function qWord(j){
+  if(j.state==='pending'){
+    if(j.blocked==='pin') return 'waiting — a model is pinned (unpin on Home)';
+    const ahead=((QSNAP&&QSNAP.jobs)||[]).filter(x=>x.state==='running').length;
+    return ahead ? 'queued — waiting for the current job' : 'queued…';
+  }
+  let t=j.current||j.stage||'working…';
+  if(j.step&&j.total) t+=' · '+j.step+'/'+j.total;
+  if(j.eta!=null) t+=' · ~'+fmtSecs(j.eta)+' left';
+  return t;
+}
+async function enqueue(kind,params,handlers){
+  const j=await post('/api/queue/add',{kind:kind,params:params});
+  MYJOBS[j.id]=handlers||{};
+  qPoll();
+  return j.id;
+}
+/* Interactive work (chat, a TTS preview, a transcript) keeps its single-call
+   shape: the POST blocks until the job runs, but it jumps the queue, so it only
+   ever waits for the one job already in flight. */
+/* Submit and await one job's result while keeping the tab's existing code shape.
+   Unlike the old blocking POST this holds no HTTP connection: the job is in the
+   queue, visible in the drawer with a measured ETA, and the tab's status line
+   tracks it. */
+/* The tabs that already had their own progress UI keep it: this hands them the
+   same status shape their old /api/<x>_status endpoint returned, read out of the
+   one queue poll. A queued-but-not-started job reads as running so the tab shows
+   its progress line (with an honest "queued…") instead of looking idle. */
+async function qJobStatus(kinds){
+  const want=Array.isArray(kinds)?kinds:[kinds];
+  let s=QSNAP;
+  if(!s||!s.jobs){ try{ s=QSNAP=await get('/api/queue'); }catch(e){ return {state:'idle',step:0,total:0,files:[]}; } }
+  const mine=s.jobs.filter(j=>want.includes(j.kind));
+  if(!mine.length) return {state:'idle',step:0,total:0,files:[],message:'',current:''};
+  const live=mine.find(j=>j.state==='running')||mine.find(j=>j.state==='pending');
+  const j=live||mine[mine.length-1];
+  return {state:(j.state==='pending'?'running':j.state), step:j.step, total:j.total,
+          message:j.message, current:qWord(j), stage:j.stage, name:j.label,
+          files:j.files||[], eta:j.eta, elapsed:j.elapsed, id:j.id, queued:j.state};
+}
+async function qCancelKind(kinds){
+  const want=Array.isArray(kinds)?kinds:[kinds];
+  const live=((QSNAP&&QSNAP.jobs)||[]).filter(j=>want.includes(j.kind)&&(j.state==='running'||j.state==='pending'));
+  for(const j of live) await qCancel(j.id);
+}
+function qRun(kind,params,statusId){
+  return new Promise((resolve,reject)=>{
+    enqueue(kind,params,{
+      onTick:j=>{ if(statusId) setStatus(statusId,qWord(j),'run'); },
+      onDone:r=>resolve(r||{}),
+      onFail:m=>reject(new Error(m))
+    }).catch(reject);
+  });
+}
+async function enqueueWait(kind,params){
+  return await post('/api/queue/add',{kind:kind,params:params,wait:true});
+}
+async function qCancel(id){ try{ await post('/api/queue/cancel',{id:id}); qPoll(); }catch(e){ toast(e.message,'err'); } }
+async function qClear(what){ try{ await post('/api/queue/clear',{what:what}); qPoll(); }catch(e){ toast(e.message,'err'); } }
+async function qMove(id,to){ try{ await post('/api/queue/move',{id:id,to:to}); qPoll(); }catch(e){ toast(e.message,'err'); } }
+function qToggle(force){
+  QOPEN = (force===undefined) ? !QOPEN : !!force;
+  $('qDrawer').classList.toggle('open',QOPEN);
+  $('qBackdrop').classList.toggle('open',QOPEN);
+  if(QOPEN) qPoll();
+}
+
+async function qPoll(){
+  clearTimeout(QTIMER);
+  let s;
+  try{ s=await get('/api/queue'); }
+  catch(e){ QTIMER=setTimeout(qPoll,3000); return; }
+  QSNAP=s; LOADED=s.resident; PINNED=s.pinned;
+  paintGlobal(); pinPaint(); qRender(s);
+  for(const j of s.jobs){
+    let h=MYJOBS[j.id];
+    // A refresh loses the closures the submitting tab registered, so re-attach
+    // the default handler for this kind — a render survives a reload.
+    if(!h && (j.state==='running'||j.state==='pending') && QKIND[j.kind]){
+      h=MYJOBS[j.id]=QKIND[j.kind]();
+    }
+    if(!h) continue;
+    if(h.onTick){ try{ h.onTick(j); }catch(e){} }
+    if(j.state==='running'||j.state==='pending') continue;
+    delete MYJOBS[j.id];
+    if(j.state==='done'){
+      let res={};
+      if(j.has_result){ try{ const r=await get('/api/queue/result?id='+j.id); res=r.result||{}; }catch(e){} }
+      if(h.onDone){ try{ h.onDone(res,j); }catch(e){} }
+    } else if(h.onFail){ try{ h.onFail(j.message||j.state,j); }catch(e){} }
+  }
+  const busy=s.jobs.some(j=>j.state==='running'||j.state==='pending');
+  QTIMER=setTimeout(qPoll, busy?1500:5000);
+}
+
+function qRender(s){
+  const live=s.jobs.filter(j=>j.state==='running'||j.state==='pending');
+  const run=s.jobs.filter(j=>j.state==='running');
+  $('qCount').textContent=live.length;
+  $('qBtn').classList.toggle('busy',live.length>0);
+  $('qBtn').classList.toggle('idle',live.length===0);
+  $('qSpin').classList.toggle('hide',run.length===0);
+  $('qEta').textContent = (live.length && s.eta!=null) ? '~'+fmtSecs(s.eta) : '';
+  $('qSub').textContent = live.length
+    ? live.length+' job'+(live.length===1?'':'s')+' · '+(s.eta!=null?'about '+fmtSecs(s.eta)+' left':'measuring…')
+    : 'nothing queued';
+  if(!QOPEN) return;
+  const rank=x=>x.state==='running'?0:x.state==='pending'?1:2;
+  const order=[...s.jobs].sort((a,b)=>rank(a)-rank(b) || a.created-b.created);
+  let pend=-1;
+  $('qBody').innerHTML = order.length ? order.map(j=>{
+    if(j.state==='pending') pend++;
+    const pct=j.total?Math.round((j.step/j.total)*100):0;
+    const cls=j.state==='running'?'run':j.state==='error'?'err':
+              (j.state==='done'||j.state==='cancelled')?'done':'';
+    const tags=[];
+    if(j.blocked==='pin') tags.push('<span class="qtag pin">waiting — a model is pinned</span>');
+    if(j.hoisted&&j.state!=='done') tags.push('<span class="qtag hoist">moved up — same model</span>');
+    if(j.priority&&j.state==='pending') tags.push('<span class="qtag now">next</span>');
+    if(j.resumed) tags.push('<span class="qtag wait">resumed after restart</span>');
+    const meta=[];
+    if(j.state==='running'){
+      meta.push('elapsed <b>'+fmtSecs(j.elapsed)+'</b>');
+      // A real ETA or nothing - never a fake percentage.
+      meta.push(j.eta!=null?'remaining <b>~'+fmtSecs(j.eta)+'</b>':'remaining <b>measuring…</b>');
+      if(j.step) meta.push('step <b>'+j.step+'/'+j.total+'</b>');
+      if(j.stage) meta.push(qEsc(j.stage));
+    } else if(j.state==='pending'){
+      meta.push(j.eta!=null?'takes <b>~'+fmtSecs(j.eta)+'</b>':'never run before');
+      if(j.model) meta.push('needs <b>'+qEsc(prettyKey(j.model))+'</b>');
+    } else {
+      meta.push(j.state==='done'?'took <b>'+fmtSecs(j.elapsed)+'</b>':j.state);
+      if(j.message) meta.push(qEsc(j.message.slice(0,90)));
+    }
+    const mv = (j.state==='pending' && pend>0)
+      ? '<button class="qmove" title="Run sooner" onclick="qMove(&quot;'+j.id+'&quot;,'+(pend-1)+')">&#9650;</button>' : '';
+    const x = (j.state==='running'||j.state==='pending')
+      ? '<button class="qx" title="Cancel" onclick="qCancel(&quot;'+j.id+'&quot;)">&times;</button>' : '';
+    return '<div class="qrow '+cls+'">'
+      + '<div class="qtop"><span class="qkind">'+qEsc(j.kind.replace(/_/g,' '))+'</span>'
+      + '<span class="qlab">'+qEsc(j.label||'')+'</span>'+mv+x+'</div>'
+      + (tags.length?'<div class="qmeta">'+tags.join(' ')+'</div>':'')
+      + '<div class="qmeta">'+meta.join('<span>·</span>')+'</div>'
+      + (j.state==='running'&&j.total?'<div class="qbar"><i style="width:'+pct+'%"></i></div>':'')
+      + '</div>';
+  }).join('') : '<div class="qempty">Nothing queued.<br>Submit work from any tab — it lines up here.</div>';
+}
+
+// ---- runs (every tab submits to the queue) --------------------------------
 $('llmTask').onchange=()=>{const v=$('llmTask').value==='vision';$('llmImgWrap').classList.toggle('hide',!v);$('llmUnlocked').disabled=v; reeval();};
 
-// ---- Language chat ---------------------------------------------------------
-let CHAT=[];
+/* ================= Language workspace / artifact panel =====================
+   The model writes real files (server side: ===FILE blocks -> workspace/).
+   This panel lists them, previews them, and lets you edit and save by hand.
+   The open file is fed back into the next prompt, so "make the heading bigger"
+   works on the thing you are looking at. */
+let WS_FILES=[], WS_OPEN=null, WS_VIEW='preview', WS_DIRTY=false, WS_SHOWN=false;
+
+function wsToggle(force){
+  WS_SHOWN = (force===undefined) ? !WS_SHOWN : !!force;
+  $('wsPanel').classList.toggle('hide',!WS_SHOWN);
+  $('langSplit').classList.toggle('open',WS_SHOWN);
+  if(WS_SHOWN) wsRefresh();
+}
+async function wsRefresh(select){
+  try{ const r=await get('/api/ws_list'); WS_FILES=r.files||[]; }catch(e){ return; }
+  $('wsCount').textContent=WS_FILES.length;
+  if(select) WS_OPEN=select;
+  if(WS_OPEN && !WS_FILES.some(f=>f.name===WS_OPEN)) WS_OPEN=null;
+  if(!WS_OPEN && WS_FILES.length) WS_OPEN=WS_FILES[0].name;
+  wsPaintList();
+  await wsPaintBody();
+}
+function wsKB(n){ return n<1024 ? n+' B' : (n/1024).toFixed(n<10240?1:0)+' KB'; }
+function wsPaintList(){
+  $('wsSub').textContent = WS_FILES.length
+    ? WS_FILES.length+' file'+(WS_FILES.length===1?'':'s')+' · workspace/'
+    : 'nothing here yet';
+  $('wsFiles').innerHTML = WS_FILES.map(f=>
+    `<button class="afile${f.name===WS_OPEN?' on':''}" onclick="wsOpenFile('${qEsc(f.name)}')">`
+    + qEsc(f.name)+`<span class="asz">${wsKB(f.size)}</span></button>`).join('');
+  const has=!!WS_OPEN;
+  $('wsTools').style.display = has ? '' : 'none';
+  if(has){
+    const url='/ws/'+WS_OPEN.split('/').map(encodeURIComponent).join('/');
+    $('wsDl').href=url; $('wsDl').setAttribute('download',WS_OPEN.split('/').pop());
+    $('wsOpen').href=url;
+  }
+}
+function wsKind(name){
+  const e=(name.split('.').pop()||'').toLowerCase();
+  if(['png','jpg','jpeg','gif','webp','bmp','ico'].includes(e)) return 'image';
+  if(['html','htm','svg'].includes(e)) return 'web';
+  return 'text';
+}
+async function wsOpenFile(name){
+  if(WS_DIRTY && !confirm('You have unsaved changes in '+WS_OPEN+'. Discard them?')) return;
+  WS_OPEN=name; WS_DIRTY=false; wsPaintList(); await wsPaintBody();
+}
+function wsSetView(v){ WS_VIEW=v; wsPaintBody(); }
+async function wsPaintBody(){
+  const body=$('wsBody');
+  if(!WS_OPEN){
+    WS_DIRTY=false; $('wsDirty').classList.add('hide');
+    body.innerHTML='<div class="aempty">'
+      +'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>'
+      +'<b>No files yet</b>Ask the chat for a page, a script or a document &mdash; '
+      +'it writes the real file and it shows up here.</div>';
+    return;
+  }
+  const kind=wsKind(WS_OPEN);
+  const url='/ws/'+WS_OPEN.split('/').map(encodeURIComponent).join('/')+'?t='+Date.now();
+  const canPreview = kind!=='text';
+  $('wsViewSeg').style.display = canPreview ? '' : 'none';
+  $('wsViewPrev').classList.toggle('active',WS_VIEW==='preview'&&canPreview);
+  $('wsViewCode').classList.toggle('active',WS_VIEW==='code'||!canPreview);
+  $('wsDirty').classList.toggle('hide',!WS_DIRTY);
+  if(canPreview && WS_VIEW==='preview'){
+    body.innerHTML = kind==='image'
+      ? `<img src="${url}" alt="${qEsc(WS_OPEN)}">`
+      // sandboxed: the page runs its own scripts so it previews properly, but it
+      // cannot reach the studio's own origin, storage or top-level navigation.
+      : `<iframe src="${url}" sandbox="allow-scripts allow-forms allow-modals allow-popups"></iframe>`;
+    return;
+  }
+  let text='';
+  try{ const r=await get('/api/ws_read?name='+encodeURIComponent(WS_OPEN)); text=r.text||''; }
+  catch(e){ body.innerHTML='<div class="aempty">'+qEsc(e.message||'could not read this file')+'</div>'; return; }
+  body.innerHTML='<textarea id="wsEdit" spellcheck="false"></textarea>';
+  const ta=$('wsEdit'); ta.value=text;
+  ta.oninput=()=>{ if(!WS_DIRTY){ WS_DIRTY=true; $('wsDirty').classList.remove('hide'); } };
+  ta.onkeydown=e=>{ if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='s'){ e.preventDefault(); wsSaveOpen(); } };
+}
+async function wsSaveOpen(){
+  const ta=$('wsEdit');
+  if(!WS_OPEN||!ta){ toast('Switch to Code to edit this file','err'); return; }
+  try{
+    await post('/api/ws_save',{name:WS_OPEN,text:ta.value});
+    WS_DIRTY=false; $('wsDirty').classList.add('hide');
+    toast('Saved '+WS_OPEN,'ok'); await wsRefresh(WS_OPEN);
+  }catch(e){ toast(e.message,'err'); }
+}
+async function wsNewFile(){
+  const name=(prompt('New file name (e.g. notes.md, page.html)')||'').trim();
+  if(!name) return;
+  try{ await post('/api/ws_save',{name,text:''}); WS_VIEW='code'; await wsRefresh(name); }
+  catch(e){ toast(e.message,'err'); }
+}
+async function wsRenameOpen(){
+  if(!WS_OPEN) return;
+  const to=(prompt('Rename to:',WS_OPEN)||'').trim();
+  if(!to||to===WS_OPEN) return;
+  try{ await post('/api/ws_rename',{name:WS_OPEN,to}); await wsRefresh(to); }
+  catch(e){ toast(e.message,'err'); }
+}
+async function wsDeleteOpen(){
+  if(!WS_OPEN||!confirm('Delete '+WS_OPEN+'? This cannot be undone.')) return;
+  const gone=WS_OPEN; WS_OPEN=null; WS_DIRTY=false;
+  try{ await post('/api/ws_delete',{name:gone}); await wsRefresh(); }
+  catch(e){ toast(e.message,'err'); }
+}
+
+/* ================= Language chat + conversation history =====================
+   The transcript lives on the SERVER (chats/<id>.json), not in this page. The
+   browser holds an id; a reload, a second tab and a server restart all see the
+   same conversation, and closing the tab mid-reply loses nothing. CHAT_ID is
+   null for a conversation that has not had its first turn yet — the server
+   mints the id with the first reply and hands it back. */
+let CHAT_ID=null, CHATS=[], CH_SHOWN=false;
+
 function chatSuggest(b){ $('llmPrompt').value=b.textContent; $('llmPrompt').focus(); }
-function chatClear(){
-  CHAT=[]; try{$('llmImg').value='';}catch(_){} const n=$('llmImgName'); if(n) n.textContent='attach image…';
+
+function chatBlank(){
+  try{$('llmImg').value='';}catch(_){} const n=$('llmImgName'); if(n) n.textContent='attach image…';
   document.querySelectorAll('#llmOut .msg').forEach(m=>m.remove());
   $('llmEmpty').classList.remove('hide'); setStatus('llmStatus','','');
 }
+/* "New chat" only clears the view. Nothing is written until the first reply, so
+   an unused new chat never litters the list with empty files. */
+function chatNew(){ CHAT_ID=null; chatBlank(); chPaint(); $('llmPrompt').focus(); }
+// The composer button and the command palette both still say "New chat".
+function chatClear(){ chatNew(); }
+
+function chToggle(force){
+  CH_SHOWN=(force===undefined)?!CH_SHOWN:!!force;
+  $('chPanel').classList.toggle('hide',!CH_SHOWN);
+  if(CH_SHOWN) chatsRefresh();
+}
+function chAgo(ts){
+  const s=Math.max(0,(Date.now()/1000)-(ts||0));
+  if(s<60) return 'just now';
+  if(s<3600) return Math.round(s/60)+'m ago';
+  if(s<86400) return Math.round(s/3600)+'h ago';
+  const d=Math.round(s/86400);
+  return d<8 ? d+'d ago' : new Date((ts||0)*1000).toLocaleDateString();
+}
+async function chatsRefresh(){
+  try{ const j=await get('/api/chat_list'); CHATS=j.chats||[]; }
+  catch(e){ CHATS=[]; }
+  $('chCount').textContent=CHATS.length;
+  chPaint();
+}
+function chPaint(){
+  const el=$('chList'); if(!el) return;
+  if(!CHATS.length){ el.innerHTML='<div class="chempty">No conversations yet.<br>Ask something \u2014 it is saved here automatically.</div>'; return; }
+  el.innerHTML=CHATS.map(c=>{
+    const bits=[c.turns+(c.turns===1?' turn':' turns'), chAgo(c.updated)];
+    if((c.files||[]).length) bits.push(c.files.length+(c.files.length===1?' file':' files'));
+    return '<div class="chrow'+(c.id===CHAT_ID?' on':'')+'" onclick="chatOpen(&quot;'+c.id+'&quot;)">'
+      + '<div class="cht">'+qEsc(c.title||'New chat')+'</div>'
+      + '<div class="chm">'+bits.join(' \u00b7 ')+'</div>'
+      + '<div class="chx">'
+      +   '<button title="Rename" onclick="event.stopPropagation();chatRename(&quot;'+c.id+'&quot;)">\u270e</button>'
+      +   '<button title="Delete" onclick="event.stopPropagation();chatDelete(&quot;'+c.id+'&quot;)">\u2715</button>'
+      + '</div></div>';
+  }).join('');
+}
+async function chatOpen(id){
+  let c;
+  try{ c=(await get('/api/chat_load?id='+encodeURIComponent(id))).chat; }
+  catch(e){ toast(e.message,'err'); await chatsRefresh(); return; }
+  CHAT_ID=id; chatBlank();
+  if(c.task&&$('llmTask').value!==c.task){ $('llmTask').value=c.task; $('llmTask').onchange(); }
+  for(const m of (c.messages||[])){
+    // The attached image is not kept in the transcript (a data URL per turn would
+    // grow the file by megabytes), so replay says an image was there.
+    addMsg(m.role==='user'?'user':'ai',
+           (m.role==='user'&&m.image?'\u{1F4CE} [image attached]\n':'')+(m.text||''),
+           null,
+           (m.files||[]).map(n=>({name:n,action:'wrote',size:0})));
+  }
+  chPaint();
+  $('llmOut').scrollTop=$('llmOut').scrollHeight;
+}
+async function chatRename(id){
+  const c=CHATS.find(x=>x.id===id); if(!c) return;
+  const title=prompt('Rename this conversation', c.title||'');
+  if(title===null) return;
+  try{ await post('/api/chat_rename',{id:id,title:title}); await chatsRefresh(); }
+  catch(e){ toast(e.message,'err'); }
+}
+async function chatDelete(id){
+  const c=CHATS.find(x=>x.id===id);
+  if(!confirm('Delete "'+((c&&c.title)||'this conversation')+'"? The files it made are kept.')) return;
+  try{ await post('/api/chat_delete',{id:id}); }
+  catch(e){ toast(e.message,'err'); return; }
+  if(CHAT_ID===id){ CHAT_ID=null; chatBlank(); }
+  await chatsRefresh();
+}
 function chatImgPick(){ const f=$('llmImg').files[0]; $('llmImgName').textContent=f?f.name:'attach image…'; }
-function addMsg(role,text,imgSrc){
+function addMsg(role,text,imgSrc,files){
   $('llmEmpty').classList.add('hide');
   const log=$('llmOut'), d=document.createElement('div'); d.className='msg '+role;
   if(imgSrc){ const im=new Image(); im.className='mimg'; im.src=imgSrc; d.appendChild(im); }
   d.appendChild(document.createTextNode(text));
   if(role==='ai'&&text){ const c=document.createElement('button'); c.className='mcopy'; c.title='Copy reply';
     c.textContent='⧉'; c.onclick=()=>copyText(text,c); d.appendChild(c); }
+  // Files this reply wrote — click one to open it in the artifact panel.
+  if((files||[]).length){
+    const row=document.createElement('div'); row.className='mfiles';
+    files.forEach(f=>{
+      const b=document.createElement('button');
+      b.className='mfile'+(f.action==='edited'?' edited':'');
+      b.textContent=(f.action==='edited'?'✎ ':'✚ ')+f.name;
+      b.title=(f.action||'wrote')+' · '+wsKB(f.size||0)+' — click to open';
+      b.onclick=()=>{ wsToggle(true); wsRefresh(f.name); };
+      row.appendChild(b);
+    });
+    d.appendChild(row);
+  }
   log.appendChild(d); log.scrollTop=log.scrollHeight; return d;
 }
 async function runLLM(){
@@ -13019,38 +16179,47 @@ async function runLLM(){
   $('llmPrompt').value='';
   const think=addMsg('ai','thinking…'); think.classList.add('thinking');
   $('llmSend').disabled=true; setStatus('llmStatus','running on local model…','run');
-  // Fold recent turns back into the prompt so follow-ups keep context (the backend
-  // /api/llm is stateless; vision stays single-shot — image + question only).
-  let prompt=q;
-  const hist=CHAT.slice(-8);
-  if(task!=='vision' && hist.length){
-    prompt='Continue this conversation naturally. Recent exchange:\n'
-      + hist.map(m=>(m.role==='user'?'User: ':'Assistant: ')+m.text).join('\n')
-      + '\nUser: '+q+'\nAssistant:';
-  }
   try{
-    const j=await post('/api/llm',{task,prompt,image:img,unlocked:$('llmUnlocked').checked});
-    think.remove(); addMsg('ai',j.text||'(empty response)');
-    CHAT.push({role:'user',text:q},{role:'ai',text:j.text||''});
+    // Only the question goes up. The server holds the transcript and builds the
+    // continuation itself, so the queue label reads as the question and a reload
+    // cannot lose the thread. The file open in the artifact panel goes with the
+    // request, so "make the heading bigger" acts on the thing you are looking at.
+    const j=await qRun('chat',{task,prompt:q,image:img,unlocked:$('llmUnlocked').checked,
+                               chat:CHAT_ID,
+                               open_files:(WS_OPEN?[WS_OPEN]:[])},'llmStatus');
+    think.remove(); addMsg('ai',j.text||'(empty response)',null,j.files);
+    if(j.chat) CHAT_ID=j.chat;
+    chatsRefresh();
     setStatus('llmStatus','','');
+    if((j.files||[]).length){
+      wsToggle(true);
+      await wsRefresh(j.files[0].name);
+    } else if(WS_SHOWN){ await wsRefresh(WS_OPEN); }
   }catch(e){ think.remove(); addMsg('ai','⚠ '+e.message); setStatus('llmStatus',e.message,'err'); }
   finally{ $('llmSend').disabled=false; $('llmPrompt').focus(); }
 }
+function imgShow(j,job){
+  $('imgEmpty').classList.add('hide'); $('imgStage').classList.add('hasresult');
+  $('imgOut').src=j.image; $('imgOut').classList.remove('hide');
+  $('imgDl').href=j.image; $('imgDl').classList.remove('hide');
+  $('imgMeta').innerHTML=`<span><b>${$('imgSize').value}</b> aspect</span><span><b>${$('imgSteps').value}</b> steps</span>`
+    +`<span><b>${fmtSecs((job||{}).elapsed)}</b></span><span>in memory only — Save to keep</span>`;
+  $('imgMeta').classList.remove('hide');
+  setStatus('imgStatus','done','ok'); seenStage('imgStage');
+  stageBusy('imgStage',false);
+}
+QKIND.image = ()=>({
+  onTick:j=>setStatus('imgStatus', qWord(j), 'run'),
+  onDone:(r,j)=>{ if(r&&r.image) imgShow(r,j); else { setStatus('imgStatus','done','ok'); stageBusy('imgStage',false); } },
+  onFail:m=>{ setStatus('imgStatus',m,'err'); stageBusy('imgStage',false); }
+});
 async function runImage(){
-  setStatus('imgStatus','generating…','run'); stageBusy('imgStage',true);
+  setStatus('imgStatus','queued…','run'); stageBusy('imgStage',true);
   $('imgDl').classList.add('hide'); $('imgMeta').classList.add('hide');
-  const t0=Date.now();
   try{
-    const j=await post('/api/image',{prompt:$('imgPrompt').value.trim(),model:$('imgModel').value,size:$('imgSize').value,steps:+$('imgSteps').value,seed:+$('imgSeed').value});
-    $('imgEmpty').classList.add('hide'); $('imgStage').classList.add('hasresult');
-    $('imgOut').src=j.image; $('imgOut').classList.remove('hide');
-    $('imgDl').href=j.image; $('imgDl').classList.remove('hide');
-    $('imgMeta').innerHTML=`<span><b>${$('imgSize').value}</b> aspect</span><span><b>${$('imgSteps').value}</b> steps</span>`
-      +`<span><b>${((Date.now()-t0)/1000).toFixed(1)}s</b></span><span>in memory only — Save to keep</span>`;
-    $('imgMeta').classList.remove('hide');
-    setStatus('imgStatus','done','ok'); seenStage('imgStage');
-  }catch(e){setStatus('imgStatus',e.message,'err');}
-  finally{ stageBusy('imgStage',false); }
+    await enqueue('image',{prompt:$('imgPrompt').value.trim(),model:$('imgModel').value,
+      size:$('imgSize').value,steps:+$('imgSteps').value,seed:+$('imgSeed').value}, QKIND.image());
+  }catch(e){ setStatus('imgStatus',e.message,'err'); stageBusy('imgStage',false); }
 }
 let ED_BA={before:null,after:null};
 function edPreview(){const box=$('edThumbs'); box.innerHTML=''; const fs=[...$('edImgs').files].slice(0,4);
@@ -13059,26 +16228,34 @@ function edPreview(){const box=$('edThumbs'); box.innerHTML=''; const fs=[...$('
 function edShow(w){ if(!ED_BA.after) return;
   $('edOut').src = (w==='before'&&ED_BA.before) ? ED_BA.before : ED_BA.after;
   document.querySelectorAll('#edBA button').forEach(b=>b.classList.toggle('active',b.textContent.toLowerCase()===w)); }
-async function runEdit(){
-  const imgs=await filesB64($('edImgs'));
-  if(!imgs.length){setStatus('edStatus','add at least one source image','err');return;}
-  setStatus('edStatus','editing…','run'); stageBusy('edStage',true);
-  $('edDl').classList.add('hide'); $('edBA').classList.add('hide'); $('edMeta').classList.add('hide');
-  const t0=Date.now();
-  try{
-    const j=await post('/api/edit',{prompt:$('edPrompt').value.trim(),images:imgs,model:$('edModel').value,size:$('edSize').value,cfg:+$('edCfg').value,steps:+$('edSteps').value,seed:+$('edSeed').value});
-    ED_BA.after=j.image;
+QKIND.edit = ()=>({
+  onTick:j=>setStatus('edStatus', qWord(j), 'run'),
+  onDone:(r,job)=>{
+    stageBusy('edStage',false);
+    if(!r||!r.image){ setStatus('edStatus','done','ok'); return; }
+    ED_BA.after=r.image;
     $('edEmpty').classList.add('hide'); $('edStage').classList.add('hasresult');
-    $('edOut').src=j.image; $('edOut').classList.remove('hide');
-    $('edDl').href=j.image; $('edDl').classList.remove('hide');
+    $('edOut').src=r.image; $('edOut').classList.remove('hide');
+    $('edDl').href=r.image; $('edDl').classList.remove('hide');
     if(ED_BA.before) $('edBA').classList.remove('hide');
     edShow('after');
     $('edMeta').innerHTML=`<span>strength <b>${$('edCfg').value}</b></span>`
-      +`<span><b>${((Date.now()-t0)/1000).toFixed(1)}s</b></span><span>in memory only — Save to keep</span>`;
+      +`<span><b>${fmtSecs((job||{}).elapsed)}</b></span><span>in memory only — Save to keep</span>`;
     $('edMeta').classList.remove('hide');
     setStatus('edStatus','done','ok'); seenStage('edStage');
-  }catch(e){setStatus('edStatus',e.message,'err');}
-  finally{ stageBusy('edStage',false); }
+  },
+  onFail:m=>{ setStatus('edStatus',m,'err'); stageBusy('edStage',false); }
+});
+async function runEdit(){
+  const imgs=await filesB64($('edImgs'));
+  if(!imgs.length){setStatus('edStatus','add at least one source image','err');return;}
+  setStatus('edStatus','queued…','run'); stageBusy('edStage',true);
+  $('edDl').classList.add('hide'); $('edBA').classList.add('hide'); $('edMeta').classList.add('hide');
+  try{
+    await enqueue('edit',{prompt:$('edPrompt').value.trim(),images:imgs,model:$('edModel').value,
+      size:$('edSize').value,cfg:+$('edCfg').value,steps:+$('edSteps').value,seed:+$('edSeed').value},
+      QKIND.edit());
+  }catch(e){ setStatus('edStatus',e.message,'err'); stageBusy('edStage',false); }
 }
 /* ---- Sprite Studio ---- */
 // Mirror of server-side SPRITE_ACTIONS: action -> default frame count.
@@ -13098,7 +16275,7 @@ function spFrameCount(){
 function spEstimate(){ const n=spFrameCount();
   $('spEstimate').textContent=`${n} frames ≈ ${Math.max(1,Math.round(n*0.6))}–${Math.round(n*1.1)} min — frames appear as they finish; everything is saved to sprites/.`; }
 function spDone(){ $('spGo').classList.remove('hide'); $('spCancel').classList.add('hide'); stageBusy('spStage',false); }
-async function cancelSprites(){ try{ await post('/api/sprite_cancel',{}); setStatus('spStatus','cancelling after this frame…','run'); }catch(e){} }
+async function cancelSprites(){ try{ await qCancelKind(['sprite','sprite_reroll']); setStatus('spStatus','cancelling after this frame…','run'); }catch(e){} }
 async function runSprites(){
   const img=await fileB64($('spRef'));
   if(!img){ setStatus('spStatus','add a reference image first','err'); return; }
@@ -13118,13 +16295,13 @@ async function runSprites(){
   $('spOut').innerHTML=''; $('spZip').classList.add('hide'); $('spMeta').classList.add('hide');
   SP_FILES=new Set();
   setStatus('spStatus','starting…','run'); stageBusy('spStage',true);
-  try{ await post('/api/sprite_start',body); spPoll(); }
+  try{ await enqueue('sprite',body); spPoll(); }
   catch(e){ setStatus('spStatus',e.message,'err'); spDone(); }
 }
 async function spPoll(){
   clearTimeout(spTimer);
   try{
-    const s=await get('/api/sprite_status');
+    const s=await qJobStatus(['sprite','sprite_reroll']);
     const pct=s.total?Math.round((s.step/s.total)*100):0; $('spBar').style.width=pct+'%';
     spRender(s);
     if(s.state==='running'){
@@ -13179,12 +16356,12 @@ async function spReroll(action,frame){
   if(!SP_NAME){ setStatus('spStatus','no sprite set loaded','err'); return; }
   setStatus('spStatus',`re-rolling ${action} frame ${frame}…`,'run'); stageBusy('spStage',true);
   $('spGo').classList.add('hide'); $('spBarWrap').classList.remove('hide'); $('spBar').style.width='0%';
-  try{ await post('/api/sprite_reroll',{name:SP_NAME,action:action,frame:frame}); spPoll(); }
+  try{ await enqueue('sprite_reroll',{name:SP_NAME,action:action,frame:frame,model:$('spModel').value}); spPoll(); }
   catch(e){ setStatus('spStatus',e.message,'err'); spDone(); }
 }
 spEstimate();
 // A sprite set survives a page refresh: reattach to a running/finished job on load.
-get('/api/sprite_status').then(s=>{ if(s.state==='running'||(s.files||[]).length) spPoll(); }).catch(()=>{});
+qJobStatus(['sprite','sprite_reroll']).then(s=>{ if(s.state==='running'||(s.files||[]).length) spPoll(); }).catch(()=>{});
 
 /* ---- Video (MiniMax H3: picture + stereo audio in one sampler pass) ---- */
 let VID_MODE='t2v', vidTimer=null;
@@ -13316,10 +16493,10 @@ async function runVideo(){
   $('vidBarWrap').classList.remove('hide'); $('vidBar').style.width='0%';
   $('vidEta').classList.remove('hide'); $('vidEta').innerHTML='<span>estimating…</span>';
   setStatus('vidStatus','starting…','run'); stageBusy('vidStage',true);
-  try{ await post('/api/h3_start',body); vidPoll(); }
+  try{ await enqueue('video',body); vidPoll(); }
   catch(e){ setStatus('vidStatus',e.message,'err'); vidDone(); }
 }
-async function cancelVideo(){ try{ await post('/api/h3_cancel',{}); setStatus('vidStatus','cancelling…','run'); }catch(e){} }
+async function cancelVideo(){ try{ await qCancelKind('video'); setStatus('vidStatus','cancelling…','run'); }catch(e){} }
 function vidDone(){
   $('vidGo').classList.remove('hide'); $('vidCancel').classList.add('hide');
   stageBusy('vidStage',false);
@@ -13327,7 +16504,7 @@ function vidDone(){
 async function vidPoll(){
   clearTimeout(vidTimer);
   try{
-    const s=await get('/api/h3_status');
+    const s=await qJobStatus('video');
     const pct=s.total?Math.round((s.step/s.total)*100):0;
     $('vidBar').style.width=pct+'%';
     if(s.state==='running'){
@@ -13382,7 +16559,7 @@ async function vidDelete(name){
 }
 vidSetMode('t2v'); vidEstimate(); vidLib();
 // A render survives a page refresh: reattach to a running/finished job on load.
-get('/api/h3_status').then(s=>{ if(s.state==='running') vidPoll(); else if((s.files||[]).length) vidShow(s.files[0]); }).catch(()=>{});
+qJobStatus('video').then(s=>{ if(s.state==='running') vidPoll(); else if((s.files||[]).length) vidShow(s.files[0]); }).catch(()=>{});
 
 /* ---- Composer (brief -> arranged, mixed, automated song) ---- */
 let coTimer=null, CO_LIB=null;
@@ -13466,7 +16643,7 @@ async function coStart(){
   $('coZip').classList.add('hide'); stageBusy('coStage',true);
   setStatus('coStatus','starting…','run');
   try{
-    await post('/api/composer_start',{
+    await enqueue('composer',{
       brief, genre:$('coGenre').value, seconds:+$('coSecs').value,
       tracks:+$('coTracks').value, name:$('coName').value.trim(),
       key:$('coKey').value, bpm:+$('coBpm').value, seed:+$('coSeed').value,
@@ -13480,7 +16657,7 @@ async function coStart(){
     coPoll();
   }catch(e){ setStatus('coStatus',e.message,'err'); coDone(); }
 }
-async function coCancel(){ try{ await post('/api/composer_cancel',{}); }catch(e){} }
+async function coCancel(){ try{ await qCancelKind(['composer','composer_rerender']); }catch(e){} }
 
 function coDone(){
   $('coGo').classList.remove('hide'); $('coCancel').classList.add('hide');
@@ -13489,7 +16666,7 @@ function coDone(){
 async function coPoll(){
   clearTimeout(coTimer);
   try{
-    const s=await get('/api/composer_status');
+    const s=await qJobStatus(['composer','composer_rerender']);
     const pct=s.total?Math.round((s.step/s.total)*100):0; $('coBar').style.width=pct+'%';
     if(s.state==='running'){
       setStatus('coStatus',`${s.step}/${s.total} — ${s.current||'working'}`,'run');
@@ -13919,7 +17096,7 @@ async function coEdRerender(){
   $('coBarWrap').classList.remove('hide'); $('coBar').style.width='0%';
   stageBusy('coStage',true);
   try{
-    await post('/api/composer_rerender',{name:ED.name,score:ED.score,
+    await enqueue('composer_rerender',{name:ED.name,score:ED.score,
       stems:$('coStems').checked,polish:$('coPolish').checked,
       polish_denoise:+$('coPolishDen').value});
     ED.dirty=false; $('coEdDirty').classList.add('hide');
@@ -13931,7 +17108,7 @@ async function coEdRerender(){
 coSecsLabel();
 coLoadLibrary();
 /* a composition survives a page refresh: reattach to a running/finished job */
-get('/api/composer_status').then(s=>{ if(s.state==='running'||s.plan) coPoll(); }).catch(()=>{});
+qJobStatus(['composer','composer_rerender']).then(s=>{ if(s.state==='running') coPoll(); }).catch(()=>{});
 
 /* ---- Music (ACE-Step) ---- */
 function muAddTags(t){ const el=$('muTags'); const cur=el.value.trim(); el.value = cur ? (cur.replace(/,\s*$/,'')+', '+t) : t; el.focus(); }
@@ -13958,7 +17135,7 @@ async function runMusic(){
   try{
     const audio=await fileB64($('muSrc'));
     const fmt=$('muFormat').value;
-    const j=await post('/api/music',{
+    const j=await qRun('music',{
       tags:$('muTags').value.trim(),
       lyrics: $('muInst').checked ? '' : $('muLyrics').value,
       model:$('muModel').value,
@@ -13972,7 +17149,7 @@ async function runMusic(){
       format:fmt, quality: fmt==='flac' ? '' : $('muQuality').value,
       audio, denoise: audio ? +$('muDenoise').value : 1.0,
       filename: $('muSrc').files[0] ? $('muSrc').files[0].name : ''
-    });
+    },'muStatus');
     $('muEmpty').classList.add('hide'); $('muStage').classList.add('hasresult');
     j.audios.forEach((u,i)=>{
       const d=document.createElement('div'); d.className='mutrack';
@@ -13996,7 +17173,7 @@ async function runSTT(){
   setStatus('sttStatus','transcribing…','run'); stageBusy('sttStage',true);
   $('sttCopy').classList.add('hide'); $('sttMeta').classList.add('hide');
   try{
-    const j=await post('/api/stt',{audio:a,filename:fileA?$('sttFile').files[0].name:'mic.wav'});
+    const j=await qRun('stt',{audio:a,filename:fileA?$('sttFile').files[0].name:'mic.wav',variant:($('sttVariant')?$('sttVariant').value:'v2')},'sttStatus');
     $('sttEmpty').classList.add('hide'); $('sttStage').classList.add('hasresult');
     $('sttOut').textContent=j.text; $('sttOut').classList.remove('hide'); $('sttCopy').classList.remove('hide');
     const words=(j.text.trim().match(/\S+/g)||[]).length;
@@ -14011,7 +17188,7 @@ async function runTTS(){
   try{
     const engine=$('ttsEngine').value;
     const ref = engine==='chatterbox' ? await fileB64($('ttsRef')) : null;
-    const j=await post('/api/tts',{text:$('ttsText').value.trim(),voice:$('ttsVoice').value.trim(),ref});
+    const j=await qRun('tts',{text:$('ttsText').value.trim(),voice:$('ttsVoice').value.trim(),ref,engine:$('ttsEngine').value},'ttsStatus');
     $('ttsEmpty').classList.add('hide');
     $('ttsOut').src=j.audio; $('ttsOut').classList.remove('hide'); setStatus('ttsStatus','done','ok'); seenStage('ttsStage');
   }catch(e){setStatus('ttsStatus',e.message,'err');}
@@ -14171,7 +17348,7 @@ async function lbAnalyze(){
   $('lbAnalyzeBtn').disabled=true; $('lbBarWrap').classList.remove('hide');
   $('lbFiles').innerHTML=''; $('lbEmpty').classList.add('hide'); $('lbBar').style.width='0%';
   setStatus('lbStatus','uploading & analyzing…','run');
-  try{ await post('/api/lullaby_analyze',{audio, filename:f.name}); lbPoll(); }
+  try{ await enqueue('lullaby_analyze',{audio, filename:f.name}); lbPoll(); }
   catch(e){ setStatus('lbStatus',e.message,'err'); $('lbAnalyzeBtn').disabled=false; }
 }
 async function lbRender(){
@@ -14182,7 +17359,7 @@ async function lbRender(){
   const tempo = LB_MODE==='melody-match' ? +$('lbMelodyTempo').value : +$('lbTempo').value;
   const routing = LB_MODE==='melody-match' ? lbMelodyRouting() : {solo:lbStemWeights(), arranged:null};
   const polish = LB_MODE==='melody-match' ? $('lbMelodyPolish').checked : $('lbPolish').checked;
-  try{ await post('/api/lullaby_render',{name:LB_NAME, mode:LB_MODE,
+  try{ await enqueue('lullaby_render',{name:LB_NAME, mode:LB_MODE,
         stems:routing.solo, arranged_stems:routing.arranged, focus:$('lbFocus').value,
         denoise:+$('lbSoft').value, slowdown:+$('lbSlow').value, tempo,
         instrument:$('lbInstrument').value, polish}); lbPoll(); }
@@ -14190,7 +17367,7 @@ async function lbRender(){
 }
 async function lbPoll(){
   try{
-    const s=await get('/api/lullaby_status');
+    const s=await qJobStatus(['lullaby','lullaby_analyze','lullaby_render']);
     const pct=s.total?Math.round((s.step/s.total)*100):0; $('lbBar').style.width=pct+'%';
     if(s.state==='running'){ setStatus('lbStatus',`Stage ${s.step}/${s.total} — ${s.current||'starting'}`,'run'); }
     else if(s.state==='error'){ setStatus('lbStatus','Error: '+s.message,'err'); }
@@ -14380,12 +17557,12 @@ async function spSplit(){
   $('spTracks').innerHTML=''; $('splEmpty').classList.add('hide'); $('splBar').style.width='0%';
   $('spZipBtn').classList.add('hide'); $('spPlayAllBtn').classList.add('hide');
   setStatus('splStatus','uploading & splitting…','run');
-  try{ await post('/api/split_start',{audio, filename:f.name, format:SP_FORMAT}); splPoll(); }
+  try{ await enqueue('split',{audio, filename:f.name, format:SP_FORMAT}); splPoll(); }
   catch(e){ setStatus('splStatus',e.message,'err'); $('spGoBtn').disabled=false; }
 }
 async function splPoll(){
   try{
-    const s=await get('/api/split_status');
+    const s=await qJobStatus('split');
     const pct=s.total?Math.round((s.step/s.total)*100):0; $('splBar').style.width=pct+'%';
     if(s.state==='running'){ setStatus('splStatus',`Stage ${s.step}/${s.total} — ${s.current||'starting'}`,'run'); }
     else if(s.state==='done'){
@@ -14492,8 +17669,8 @@ async function abPreview(){
   setStatus('abStatus','synthesizing preview…','run'); $('abPreviewBtn').disabled=true;
   try{
     const j = LOADED.indexOf('voicemodel:')===0
-      ? await post('/api/voicemodel',{text:sample, ...abControls()})
-      : await post('/api/tts',{text:sample, voice:$('abVoice').value.trim(), ...abControls(), ...(await abRefBody())});
+      ? await qRun('voicemodel',{text:sample, name:$('abVoiceModel').value, ...abControls()},'abStatus')
+      : await qRun('tts',{text:sample, voice:$('abVoice').value.trim(), engine:$('abEngine').value, ...abControls(), ...(await abRefBody())},'abStatus');
     const a=$('abPreviewAudio'); a.src=j.audio; a.classList.remove('hide'); a.play().catch(()=>{});
     setStatus('abStatus','preview ready — happy with this voice? then render','ok');
   }catch(e){ setStatus('abStatus',e.message,'err'); }
@@ -14508,12 +17685,12 @@ async function abGenerate(){
   else { body.text=$('abText').value.trim(); body.title=$('abTitle').value.trim()||'Audiobook'; if(!body.text){setStatus('abStatus','paste or upload some text','err');return;} }
   $('abGenBtn').disabled=true; $('abBarWrap').classList.remove('hide'); $('abFiles').innerHTML='';
   setStatus('abStatus','starting…','run');
-  try{ await post('/api/audiobook_start',body); abPoll(); }
+  try{ await enqueue('audiobook',body); abPoll(); }
   catch(e){ setStatus('abStatus',e.message,'err'); $('abGenBtn').disabled=false; }
 }
 async function abPoll(){
   try{
-    const s=await get('/api/audiobook_status');
+    const s=await qJobStatus('audiobook');
     const pct=s.total?Math.round((s.step/s.total)*100):0; $('abBar').style.width=pct+'%';
     if(s.state==='running'){ setStatus('abStatus',`Rendering ${s.step}/${s.total} — ${s.current||''}`,'run'); }
     else if(s.state==='done'){ setStatus('abStatus','✓ Audiobook complete','ok'); $('abBar').style.width='100%'; }
@@ -14576,7 +17753,7 @@ async function runVoiceModel(){
   else { if(!VM_AUDIO){setStatus('vmRunStat','record or upload some audio first','err');return;} body.audio=VM_AUDIO; }
   setStatus('vmRunStat','speaking…','run'); $('vmOut').classList.add('hide'); $('vmDl').classList.add('hide'); $('vmHeard').classList.add('hide');
   try{
-    const j=await post('/api/voicemodel',body);
+    const j=await qRun('voicemodel',body,'vmRunStat');
     $('vmEmpty').classList.add('hide');
     if(mode==='voice' && j.text){ $('vmHeard').textContent='heard: “'+j.text+'”'; $('vmHeard').classList.remove('hide'); }
     $('vmOut').src=j.audio; $('vmOut').classList.remove('hide'); $('vmDl').href=j.audio; $('vmDl').classList.remove('hide');
@@ -14609,13 +17786,13 @@ async function vcTrain(){
   $('vcTrainBtn').disabled=true; $('vcBarWrap').classList.remove('hide');
   setStatus('vcTrainStat','starting… (frees other models; this runs a few minutes)','run');
   try{
-    await post('/api/voice_train',{name,language:'en',epochs,samples:vcSamples});
+    await enqueue('voice_train',{name,language:'en',epochs,samples:vcSamples});
     pollTrain(name);
   }catch(e){ setStatus('vcTrainStat',e.message,'err'); $('vcTrainBtn').disabled=false; }
 }
 async function pollTrain(name){
   try{
-    const s=await get('/api/voice_train_status');
+    const s=await qJobStatus('voice_train');
     const pct = s.total ? Math.round((s.epoch/s.total)*100) : 0;
     $('vcBar').style.width=pct+'%';
     if(s.state==='preparing'){ setStatus('vcTrainStat','preparing dataset…','run'); }
@@ -14639,9 +17816,15 @@ document.querySelectorAll('#imgAspects button').forEach(b=>b.addEventListener('c
   document.querySelectorAll('#imgAspects button').forEach(x=>x.classList.toggle('active',x===b));
 }));
 
-// restore state on load + light poll so the global pill stays accurate
-get('/api/status').then(s=>{LOADED=s.key; paint();}).catch(()=>paint());
-setInterval(()=>{ if(BUSY) return; get('/api/status').then(s=>{ if(s.key!==LOADED){ LOADED=s.key; paint(); } }).catch(()=>{}); }, 5000);
+// One queue poll now carries the resident model, the pin and every job's
+// progress, so the old 5s /api/status poll and the seven per-tab pollers are gone.
+pinBuild(); paint(); qPoll();
+wsRefresh().catch(()=>{});   // Language workspace file count
+/* Coming back to the tab should look like coming back to a chat app: the last
+   conversation is already open. New chat is one click away; nothing is written
+   until a reply, so this cannot resurrect an empty one. */
+chatsRefresh().then(()=>{ if(CHATS.length) return chatOpen(CHATS[0].id); }).catch(()=>{});
+document.addEventListener('keydown',e=>{ if(e.key==='Escape'&&QOPEN) qToggle(false); });
 
 // live GPU bar in the topbar (server proxies nvidia-smi at /api/gpu)
 async function pollGpu(){
@@ -14916,12 +18099,12 @@ async function stGenerate(){
   if(!STORY.beats.length){ stSetStatus('add a plot point first','err'); return; }
   await stSave(); stMode('read');
   $('stGenBtn').disabled=true; $('stGenProg').textContent='Starting…'; $('stGenProg').className='status run';
-  try{ await post('/api/story_generate',{id:STORY.id}); stPollGen(); }
+  try{ await enqueue('story',{id:STORY.id}); stPollGen(); }
   catch(e){ $('stGenProg').textContent=e.message; $('stGenProg').className='status err'; $('stGenBtn').disabled=false; }
 }
 async function stPollGen(){
   try{
-    const s=await get('/api/story_status');
+    const s=await qJobStatus('story');
     if(s.sid===STORY.id){
       if(s.state==='running'){ $('stGenProg').textContent=`Writing scene ${s.step}/${s.total} — ${s.current||''}`; $('stGenProg').className='status run'; }
       else if(s.state==='done'){ $('stGenProg').textContent='✓ Story complete'; $('stGenProg').className='status ok'; }
@@ -14934,7 +18117,7 @@ async function stPollGen(){
 }
 async function stRegen(key){
   if(!STORY) return;
-  try{ const j=await post('/api/story_regen_scene',{id:STORY.id,key}); const r=await get('/api/story_load?id='+encodeURIComponent(STORY.id)); STORY=r.story; stRenderReader(); stRenderInspector(); }
+  try{ const j=await qRun('story_regen',{id:STORY.id,key},'stStatus'); const r=await get('/api/story_load?id='+encodeURIComponent(STORY.id)); STORY=r.story; stRenderReader(); stRenderInspector(); }
   catch(e){ stSetStatus(e.message,'err'); }
 }
 async function stExport(){
@@ -14961,7 +18144,7 @@ STORY=stBlank(); stRenderAll(); stRefreshList();
 </html>
 ```
 
-## File 9 of 29 — `%USERPROFILE%\local-ai-studio\studio_gui.pyw`
+## File 9 of 32 — `%USERPROFILE%\local-ai-studio\studio_gui.pyw`
 
 ```python
 #!/usr/bin/env python3
@@ -15529,7 +18712,7 @@ if __name__ == "__main__":
     main()
 ```
 
-## File 10 of 29 — `%USERPROFILE%\local-ai-studio\studioctl.ps1`
+## File 10 of 32 — `%USERPROFILE%\local-ai-studio\studioctl.ps1`
 
 ```powershell
 <#
@@ -15603,6 +18786,28 @@ $COMFY_BASE   = Join-Path $env:USERPROFILE 'Documents\ComfyUI'
 $STUDIO_PY    = (Get-Command python -ErrorAction SilentlyContinue).Source
 $STUDIO_MAIN  = Join-Path $HERE 'server.py'
 $TAILSCALE    = Join-Path $env:ProgramFiles 'Tailscale\tailscale.exe'
+
+# Ollama runtime settings --------------------------------------------------
+# Ollama's default context window is 4096 tokens, and its OpenAI-compatible
+# /v1/chat/completions endpoint - which is what ask.py uses - will not accept
+# num_ctx per request. So the window can only be set here, on the server. Left
+# at the default, a 32k-token prompt arrives as 4096 tokens with the front
+# silently discarded (measured: prompt_tokens=4096, empty answer).
+#
+# 32768 is affordable only because the KV cache is quantised: flash attention
+# plus q8_0 roughly halves it, for a perplexity change too small to notice.
+# Ollama silently falls back to f16 on architectures outside its allowlist, so
+# treat these as requests, not guarantees - verify against nvidia-smi.
+#
+# Set here rather than machine-wide on purpose: this is part of the studio's
+# definition, and the values must hold no matter what the ambient environment
+# of the launching shell happens to carry.
+$OLLAMA_ENV = @{
+    OLLAMA_CONTEXT_LENGTH  = '32768'
+    OLLAMA_FLASH_ATTENTION = '1'
+    OLLAMA_KV_CACHE_TYPE   = 'q8_0'
+}
+foreach ($k in $OLLAMA_ENV.Keys) { Set-Item -Path "env:$k" -Value $OLLAMA_ENV[$k] }
 
 # service definitions ------------------------------------------------------
 $SERVICES = [ordered]@{
@@ -15681,7 +18886,14 @@ function Start-HiddenSvc($exe, $argList, $cwd, $outLog, $errLog) {
 }
 
 function Start-OllamaSvc {
-    if (Test-Http $SERVICES.Ollama.Health 2) { Write-Status 'Ollama' 'UP' 'already running'; return }
+    if (Test-Http $SERVICES.Ollama.Health 2) {
+        # An Ollama started outside this script (its own tray autostart, or a shell
+        # with a stale environment) keeps the 4096-token default. The settings above
+        # only reach it through a fresh process, so say so rather than reporting a
+        # healthy service that is quietly truncating every long prompt.
+        Write-Status 'Ollama' 'UP' 'already running - restart to apply context settings'
+        return
+    }
     if (-not (Test-Path $OLLAMA_EXE)) { Write-Status 'Ollama' 'DOWN' "exe not found: $OLLAMA_EXE"; return }
     Write-Host '  Starting Ollama' -NoNewline -ForegroundColor Yellow
     Start-HiddenSvc $OLLAMA_EXE @('serve') $null `
@@ -15877,7 +19089,7 @@ switch ($Command) {
 exit $script:Failures
 ```
 
-## File 11 of 29 — `%USERPROFILE%\local-ai-studio\studio.cmd`
+## File 11 of 32 — `%USERPROFILE%\local-ai-studio\studio.cmd`
 
 ```bat
 @echo off
@@ -15893,7 +19105,7 @@ REM   studio monitor          live refreshing report
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0studioctl.ps1" %*
 ```
 
-## File 12 of 29 — `%USERPROFILE%\local-ai-studio\Studio Control Panel.cmd`
+## File 12 of 32 — `%USERPROFILE%\local-ai-studio\Studio Control Panel.cmd`
 
 ```bat
 @echo off
@@ -15961,7 +19173,7 @@ pause
 :done
 ```
 
-## File 13 of 29 — `%USERPROFILE%\local-ai-studio\Studio Control Panel.vbs`
+## File 13 of 32 — `%USERPROFILE%\local-ai-studio\Studio Control Panel.vbs`
 
 ```vbs
 ' Launch the Local AI Studio visual control panel (studio_gui.pyw) with NO console
@@ -16018,7 +19230,7 @@ MsgBox "Could not find a Python with tkinter installed." & vbCrLf & vbCrLf & _
        "Start Menu > Local AI Studio > Local AI Studio Setup", 48, "Local AI Studio"
 ```
 
-## File 14 of 29 — `%USERPROFILE%\Documents\ComfyUI\custom_nodes\ram_websocket_save.py`
+## File 14 of 32 — `%USERPROFILE%\Documents\ComfyUI\custom_nodes\ram_websocket_save.py`
 
 ```python
 """RAM-only image output for the Local AI Studio.
@@ -16068,7 +19280,7 @@ NODE_CLASS_MAPPINGS = {"SaveImageWebsocket": SaveImageWebsocket}
 NODE_DISPLAY_NAME_MAPPINGS = {"SaveImageWebsocket": "Save Image (Websocket · RAM-only)"}
 ```
 
-## File 15 of 29 — `%USERPROFILE%\Documents\ComfyUI\custom_nodes\ace15_studio_encode.py`
+## File 15 of 32 — `%USERPROFILE%\Documents\ComfyUI\custom_nodes\ace15_studio_encode.py`
 
 ```python
 """AceStep15StudioEncode: TextEncodeAceStepAudio1.5 with optional musical metas.
@@ -16125,7 +19337,7 @@ NODE_CLASS_MAPPINGS = {"AceStep15StudioEncode": AceStep15StudioEncode}
 NODE_DISPLAY_NAME_MAPPINGS = {"AceStep15StudioEncode": "TextEncode ACE-Step 1.5 (studio, auto metas)"}
 ```
 
-## File 16 of 29 — `%USERPROFILE%\.claude\skills\local-llm\SKILL.md`
+## File 16 of 32 — `%USERPROFILE%\.claude\skills\local-llm\SKILL.md`
 
 ````markdown
 ---
@@ -16175,7 +19387,7 @@ The script prints only the model's text reply to stdout (errors to stderr, non-z
   if you want max coding quality later.
 ````
 
-## File 17 of 29 — `%USERPROFILE%\.claude\skills\local-llm\scripts\ask.py`
+## File 17 of 32 — `%USERPROFILE%\.claude\skills\local-llm\scripts\ask.py`
 
 ```python
 #!/usr/bin/env python3
@@ -16232,10 +19444,12 @@ def main() -> int:
                     help="Penalize tokens by frequency (curbs repetition loops).")
     ap.add_argument("--presence-penalty", type=float, default=None,
                     help="Penalize tokens already present (encourages new content).")
-    ap.add_argument("--reasoning-effort", choices=["low", "medium", "high"], default="low",
-                    help="Reasoning depth for gpt-oss reasoning models. 'low' keeps the hidden "
-                         "reasoning short so it doesn't consume the whole token budget and leave an "
-                         "empty answer.")
+    ap.add_argument("--reasoning-effort",
+                    choices=["none", "low", "medium", "high", "max"], default="low",
+                    help="Reasoning depth for gpt-oss reasoning models. The hidden reasoning is "
+                         "billed against --max-tokens, so raising this needs a matching budget or "
+                         "the model spends it all thinking and returns an empty answer. 'low' is "
+                         "the safe default; callers that give real headroom should ask for more.")
     args = ap.parse_args()
 
     prompt = " ".join(args.prompt).strip()
@@ -16319,7 +19533,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-## File 18 of 29 — `%USERPROFILE%\.claude\skills\local-image\SKILL.md`
+## File 18 of 32 — `%USERPROFILE%\.claude\skills\local-image\SKILL.md`
 
 ````markdown
 ---
@@ -16386,7 +19600,7 @@ Reuse the bundled `image-gen` skill's `cutout.py` (rembg) for alpha cutout:
 - First generation loads ~11GB of weights; subsequent ones are fast. Free Ollama VRAM before generating.
 ````
 
-## File 19 of 29 — `%USERPROFILE%\.claude\skills\local-image\scripts\gen.py`
+## File 19 of 32 — `%USERPROFILE%\.claude\skills\local-image\scripts\gen.py`
 
 ```python
 #!/usr/bin/env python3
@@ -16438,6 +19652,12 @@ SIZES = {  # FLUX.2-friendly resolutions
     "1:1": (1024, 1024), "3:4": (896, 1152), "4:3": (1152, 896),
     "9:16": (768, 1344), "16:9": (1344, 768),
 }
+
+
+def _client_id() -> str:
+    # The studio sets STUDIO_COMFY_TAG so a cancel can find and stop this prompt in
+    # ComfyUI's queue; killing this script alone leaves ComfyUI rendering it.
+    return os.environ.get("STUDIO_COMFY_TAG", "") + uuid.uuid4().hex
 
 
 def _post(path: str, payload: dict) -> dict:
@@ -16711,7 +19931,7 @@ def main() -> int:
         graph = build_edit_graph(args.prompt, names, w, h, args.steps, cfg, seed, unet, clip)
     else:
         graph = build_graph(args.prompt, w, h, args.steps, cfg, seed, unet, clip)
-    client_id = uuid.uuid4().hex
+    client_id = _client_id()
     try:
         data = capture_ws(graph, client_id)   # PNG bytes received in memory over the ws
     except urllib.error.HTTPError as e:
@@ -16740,7 +19960,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-## File 20 of 29 — `%USERPROFILE%\.claude\skills\local-music\scripts\musicgen.py`
+## File 20 of 32 — `%USERPROFILE%\.claude\skills\local-music\scripts\musicgen.py`
 
 ```python
 #!/usr/bin/env python3
@@ -16803,6 +20023,12 @@ MIME = {"mp3": "audio/mpeg", "flac": "audio/flac", "opus": "audio/ogg"}
 SAVE_NODE = "40"  # id of the save node in the graph (looked up in /history outputs)
 # No console windows for ffmpeg children (this script runs windowless under the studio).
 NOWIN = {"creationflags": 0x08000000} if os.name == "nt" else {}
+
+
+def _client_id() -> str:
+    # The studio sets STUDIO_COMFY_TAG so a cancel can find and stop this prompt in
+    # ComfyUI's queue; killing this script alone leaves ComfyUI rendering it.
+    return os.environ.get("STUDIO_COMFY_TAG", "") + uuid.uuid4().hex
 
 
 def _post(path: str, obj: dict) -> dict:
@@ -16880,7 +20106,7 @@ def build_graph(a, seed: int, lyrics: str) -> dict:
 
 def run(graph: dict, timeout: int) -> list[bytes]:
     """Submit the graph, poll /history until done, fetch + delete the audio files."""
-    pid = _post("/prompt", {"prompt": graph, "client_id": uuid.uuid4().hex}).get("prompt_id")
+    pid = _post("/prompt", {"prompt": graph, "client_id": _client_id()}).get("prompt_id")
     if not pid:
         raise RuntimeError("ComfyUI accepted no prompt (are the ACE-Step 1.5 models installed?)")
     deadline = time.time() + timeout
@@ -17066,7 +20292,7 @@ if __name__ == "__main__":
     sys.exit(main())
 ```
 
-## File 21 of 29 — `%USERPROFILE%\.claude\skills\local-stt\SKILL.md`
+## File 21 of 32 — `%USERPROFILE%\.claude\skills\local-stt\SKILL.md`
 
 ````markdown
 ---
@@ -17099,7 +20325,7 @@ with ffmpeg if available (else convert first: `ffmpeg -i in.mp3 -ar 16000 -ac 1 
 - Requires the `nemo-asr` conda env (NVIDIA NeMo + CUDA torch). The transcript is the LAST stdout line.
 ````
 
-## File 22 of 29 — `%USERPROFILE%\.claude\skills\local-stt\scripts\transcribe.py`
+## File 22 of 32 — `%USERPROFILE%\.claude\skills\local-stt\scripts\transcribe.py`
 
 ```python
 #!/usr/bin/env python3
@@ -17230,7 +20456,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-## File 23 of 29 — `%USERPROFILE%\.claude\skills\local-tts\SKILL.md`
+## File 23 of 32 — `%USERPROFILE%\.claude\skills\local-tts\SKILL.md`
 
 ````markdown
 ---
@@ -17270,7 +20496,7 @@ Writes a wav to `--out` (default `tts_out.wav`) and prints its path to stdout.
   `pkg_resources`, which the Perth watermarker needs) and installed the cu124 torch build for GPU.
 ````
 
-## File 24 of 29 — `%USERPROFILE%\.claude\skills\local-tts\scripts\speak.py`
+## File 24 of 32 — `%USERPROFILE%\.claude\skills\local-tts\scripts\speak.py`
 
 ```python
 #!/usr/bin/env python3
@@ -17448,7 +20674,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-## File 25 of 29 — `%USERPROFILE%\.claude\skills\local-tts\scripts\voicechange.py`
+## File 25 of 32 — `%USERPROFILE%\.claude\skills\local-tts\scripts\voicechange.py`
 
 ```python
 #!/usr/bin/env python3
@@ -17545,7 +20771,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-## File 26 of 29 — `%USERPROFILE%\.claude\skills\local-voice\scripts\xtts_train.py`
+## File 26 of 32 — `%USERPROFILE%\.claude\skills\local-voice\scripts\xtts_train.py`
 
 ```python
 #!/usr/bin/env python3
@@ -17690,7 +20916,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-## File 27 of 29 — `%USERPROFILE%\.claude\skills\local-voice\scripts\xtts_infer.py`
+## File 27 of 32 — `%USERPROFILE%\.claude\skills\local-voice\scripts\xtts_infer.py`
 
 ```python
 #!/usr/bin/env python3
@@ -17794,7 +21020,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-## File 28 of 29 — `%USERPROFILE%\.claude\skills\local-voice\scripts\scripts.json`
+## File 28 of 32 — `%USERPROFILE%\.claude\skills\local-voice\scripts\scripts.json`
 
 ```json
 [
@@ -17841,7 +21067,7 @@ if __name__ == "__main__":
 ]
 ```
 
-## File 29 of 29 — `%USERPROFILE%\.claude\skills\local-tts\scripts\zonos_tts.py`
+## File 29 of 32 — `%USERPROFILE%\.claude\skills\local-tts\scripts\zonos_tts.py`
 
 ```python
 #!/usr/bin/env python3
@@ -18037,4 +21263,610 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+```
+
+## File 30 of 32 — `%USERPROFILE%\local-ai-studio\sfxgen.py`
+
+```python
+#!/usr/bin/env python3
+"""sfxgen: sound effects and ambience from a text prompt (Stable Audio 3.0 Small SFX).
+
+Drives ComfyUI's native audio nodes over HTTP — no custom nodes. Sits alongside
+ACE-Step (music) and the TTS engines (voice) as the third leg of game audio:
+footsteps, impacts, UI clicks, weather, room tone.
+
+Why this model and not Stable Audio Open 1.0, which shipped here first: SAO is a
+music model doing SFX as a side job, trained on Freesound and the Free Music Archive.
+It reliably gets what a thing is MADE OF and misses what is HAPPENING to it — a
+"glass bottle smashing" came out as glass tapping, and a typewriter came out as an
+even metronome rather than uneven human typing. Sony's Woosh paper measures the same
+gap as a 66% CLAP difference against SAO. Stable Audio 3.0 Small SFX is the variant
+Stability trained for this specific job, and it is a third of the size.
+
+  sfxgen.py "heavy wooden door creaking open" --seconds 6 --out door.flac
+
+SA3 is a DISTILLED model and its sampler settings are nothing like SAO's:
+  * 8 steps, not 50. More steps do not help; the schedule is baked in.
+  * cfg 1.0, and the lcm sampler. At cfg 1.0 guidance is off, which means a NEGATIVE
+    PROMPT DOES NOTHING — it is accepted for compatibility and ignored. Say what you
+    want, not what you don't.
+  * Its text encoder is T5Gemma, loaded separately from the checkpoint.
+
+Prompting, per Stability's own SFX system prompt shipped in the ComfyUI template:
+name the source, its physical material, the space it is in, and — the one that
+actually fixes the failures above — its TEMPORAL EVOLUTION: attack, decay, movement,
+how it changes over the clip. Then append the length, which this script does for you.
+
+Their length guidance, which matters more than it sounds: impacts and clicks want
+1-3s, actions like footsteps 3-6s, ambience 6-15s. Asking for a 5-second single
+impact gives the model four seconds it has to fill with something.
+
+Exit codes: 0 ok · 1 error · 2 bad args · 4 ComfyUI unreachable.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import sys
+import time
+import urllib.request
+import uuid
+
+COMFY = os.environ.get("COMFY_URL", "http://127.0.0.1:8188").rstrip("/")
+COMFY_ROOT = os.environ.get("COMFYUI_BASE",
+                            os.path.join(os.path.expanduser("~"), "Documents", "ComfyUI"))
+COMFY_OUT = os.path.join(COMFY_ROOT, "output")
+
+CKPT = "stable_audio_3_small_sfx.safetensors"
+TEXT_ENCODER = "t5gemma_b_b_ul2.safetensors"
+
+# Distilled schedule, taken from ComfyUI's official Stable Audio 3 template. These are
+# not tuning knobs — deviating mostly makes it worse.
+STEPS = 8
+CFG = 1.0
+SAMPLER = "lcm"
+SCHEDULER = "simple"
+
+MAX_SECONDS = 190.0       # SA3 generates far longer than SAO's 47s ceiling
+SAMPLE_RATE = 44100
+
+
+def _client_id() -> str:
+    # The studio sets STUDIO_COMFY_TAG so a cancel can find and stop this prompt in
+    # ComfyUI's queue; killing this script alone leaves ComfyUI rendering it.
+    return os.environ.get("STUDIO_COMFY_TAG", "") + uuid.uuid4().hex
+
+
+def _post(path: str, payload: dict) -> dict:
+    req = urllib.request.Request(f"{COMFY}{path}", data=json.dumps(payload).encode(),
+                                 headers={"Content-Type": "application/json"}, method="POST")
+    with urllib.request.urlopen(req, timeout=120) as r:
+        return json.load(r)
+
+
+def _get(path: str) -> dict:
+    with urllib.request.urlopen(f"{COMFY}{path}", timeout=120) as r:
+        return json.load(r)
+
+
+def comfy_alive() -> bool:
+    try:
+        _get("/system_stats")
+        return True
+    except Exception:
+        return False
+
+
+def with_length(prompt: str, seconds: float) -> str:
+    """Append `Length: N seconds` unless the caller already wrote one.
+
+    SA3 was trained with the duration stated in the prompt text, not only as a latent
+    size. Leaving it out is the difference between an effect that resolves inside the
+    clip and one that is still ramping when the audio stops."""
+    if re.search(r"\blength\s*:\s*\d+", prompt, re.I):
+        return prompt
+    return f"{prompt.rstrip().rstrip('.')}. Length: {int(round(seconds))} seconds"
+
+
+def graph(prompt: str, negative: str, seconds: float, seed: int, batch: int) -> dict:
+    """The chain from ComfyUI's own Stable Audio 3 template.
+
+    Note what is NOT here: no ConditioningStableAudio. SA3 carries its own seconds_total
+    embedder and takes the duration from the latent length plus the prompt text, so the
+    extra conditioning node SAO needed is neither required nor wired up.
+    """
+    return {
+        "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": CKPT}},
+        "2": {"class_type": "CLIPLoader",
+              "inputs": {"clip_name": TEXT_ENCODER, "type": "stable_audio"}},
+        "3": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": prompt}},
+        "4": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["2", 0], "text": negative}},
+        "5": {"class_type": "EmptyLatentAudio",
+              "inputs": {"seconds": seconds, "batch_size": batch}},
+        "6": {"class_type": "KSampler",
+              "inputs": {"model": ["1", 0], "positive": ["3", 0], "negative": ["4", 0],
+                         "latent_image": ["5", 0], "seed": seed, "steps": STEPS,
+                         "cfg": CFG, "sampler_name": SAMPLER, "scheduler": SCHEDULER,
+                         "denoise": 1.0}},
+        "7": {"class_type": "VAEDecodeAudio",
+              "inputs": {"samples": ["6", 0], "vae": ["1", 2]}},
+        "8": {"class_type": "SaveAudio",
+              "inputs": {"audio": ["7", 0], "filename_prefix": "sfx/take"}},
+    }
+
+
+def run(g: dict, timeout: int) -> list:
+    pid = _post("/prompt", {"prompt": g, "client_id": _client_id()}).get("prompt_id")
+    if not pid:
+        raise RuntimeError("ComfyUI rejected the graph")
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        hist = _get(f"/history/{pid}")
+        if pid in hist:
+            entry = hist[pid]
+            st = entry.get("status", {})
+            if st.get("status_str") == "error":
+                raise RuntimeError(f"ComfyUI job failed: {json.dumps(st.get('messages', []))[:600]}")
+            out = []
+            for node in entry.get("outputs", {}).values():
+                for f in node.get("audio", []) or []:
+                    out.append(f)
+            return out
+        time.sleep(1.0)
+    raise RuntimeError(f"timed out after {timeout}s")
+
+
+def collect(files: list, out: str) -> list:
+    """Copy every take out of ComfyUI's output dir. With batch>1 the caller gets
+    take_1/take_2/... alongside the requested name — picking between takes is the
+    whole workflow for sound effects."""
+    if not files:
+        raise RuntimeError("job finished but produced no audio")
+    base, ext = os.path.splitext(out)
+    ext = ext or ".flac"
+    os.makedirs(os.path.dirname(os.path.abspath(out)) or ".", exist_ok=True)
+    written = []
+    for i, f in enumerate(files):
+        src = os.path.join(COMFY_OUT, f.get("subfolder", ""), f["filename"])
+        if not os.path.isfile(src):
+            continue
+        dst = out if i == 0 else f"{base}_take{i + 1}{ext}"
+        with open(src, "rb") as a, open(dst, "wb") as b:
+            b.write(a.read())
+        written.append(dst)
+    if not written:
+        raise RuntimeError("ComfyUI reported audio but no file was found on disk")
+    return written
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="Generate a sound effect (Stable Audio 3 Small SFX).")
+    ap.add_argument("prompt", nargs="*", help="What the sound is.")
+    ap.add_argument("--out", required=True, help="Output file (.flac or .wav).")
+    ap.add_argument("--seconds", type=float, default=5.0)
+    ap.add_argument("--negative", default="",
+                    help="Ignored: SA3 runs at cfg 1.0, where guidance is off. Kept so "
+                         "existing callers do not break.")
+    ap.add_argument("--takes", type=int, default=1, help="How many variations to render.")
+    ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--no-length", action="store_true",
+                    help="Do not append 'Length: N seconds' to the prompt.")
+    ap.add_argument("--timeout", type=int, default=900)
+    # Accepted and ignored so the studio's older calls keep working.
+    ap.add_argument("--steps", type=int, default=None, help=argparse.SUPPRESS)
+    ap.add_argument("--cfg", type=float, default=None, help=argparse.SUPPRESS)
+    a = ap.parse_args()
+
+    prompt = " ".join(a.prompt).strip()
+    if not prompt:
+        print("error: no prompt", file=sys.stderr)
+        return 2
+    if not comfy_alive():
+        print(f"error: ComfyUI not reachable at {COMFY}", file=sys.stderr)
+        return 4
+
+    seconds = max(1.0, min(float(a.seconds), MAX_SECONDS))
+    if seconds != a.seconds:
+        print(f"clamped to {seconds}s", file=sys.stderr)
+    if not a.no_length:
+        prompt = with_length(prompt, seconds)
+    seed = a.seed or int(time.time()) % 2_000_000_000
+    takes = max(1, min(int(a.takes), 8))
+
+    print(json.dumps({"stage": "start", "seconds": seconds, "takes": takes,
+                      "steps": STEPS, "seed": seed, "prompt": prompt}), flush=True)
+    t0 = time.time()
+    try:
+        files = run(graph(prompt, a.negative, seconds, seed, takes), a.timeout)
+        written = collect(files, a.out)
+    except Exception as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+
+    print(json.dumps({"stage": "done", "files": written, "seed": seed,
+                      "sample_rate": SAMPLE_RATE,
+                      "seconds": round(time.time() - t0, 1)}))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+```
+
+## File 31 of 32 — `%USERPROFILE%\local-ai-studio\mesh3d.py`
+
+```python
+#!/usr/bin/env python3
+"""mesh3d: one image -> a textured-ready 3D mesh (Hunyuan3D 2.1) via ComfyUI.
+
+Native ComfyUI nodes only, same HTTP pattern as gen.py and h3gen.py.
+
+The fit with the rest of the studio is the point: Sprite Studio already takes ONE
+reference image and chains it through ReferenceLatent for consistency. The same input
+produces a 3D asset here, so nothing new has to be explained to the user.
+
+  mesh3d.py --in reference.png --out model.glb [--resolution 3072] [--steps 30]
+
+What the knobs actually do:
+  --resolution      how many tokens the shape latent gets. This is the one that decides
+                    whether you get a model or a smear - the node default is 3072 and
+                    dropping it an order of magnitude yields an empty mesh, not a coarse
+                    one.
+  --octree          the marching-cubes resolution used when the voxel field is turned
+                    into triangles. This is mesh density, NOT shape detail - raising it
+                    on a coarse sample just gives a smoother version of the same blob.
+  --threshold       the iso-surface cutoff. Lower captures thin protrusions (a sword, a
+                    tail) at the cost of noise; higher gives a cleaner but fatter mesh.
+
+Geometry only, and that is where this stops. Hunyuan3D 2.1 emits an untextured mesh;
+texturing it is a separate job this studio does not do. Hunyuan3D's own paint half
+exists (in tencent/Hunyuan3D-2.1) but is not in the Comfy-Org repackage and has no
+native ComfyUI nodes, and the texture nodes that ARE present - Meshy, Tripo, Tencent -
+are all paid cloud APIs, which is the opposite of the point here. So: take the .glb
+into Blender and texture it there.
+
+Exit codes: 0 ok · 1 error · 2 bad args · 4 ComfyUI unreachable.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import sys
+import time
+import urllib.request
+import uuid
+
+COMFY = os.environ.get("COMFY_URL", "http://127.0.0.1:8188").rstrip("/")
+COMFY_ROOT = os.environ.get("COMFYUI_BASE",
+                            os.path.join(os.path.expanduser("~"), "Documents", "ComfyUI"))
+COMFY_IN = os.path.join(COMFY_ROOT, "input")
+COMFY_OUT = os.path.join(COMFY_ROOT, "output")
+
+CKPT = "hunyuan_3d_v2.1.safetensors"
+
+# NOT a spatial grid. EmptyLatentHunyuan3Dv2's "resolution" is the length of the shape
+# latent token sequence, and the node's own default is 3072. Passing an image-style 384
+# here produced a valid but empty .glb - 636 triangles of flat nonsense - because the
+# shape had almost no tokens to live in. Measured on this card: 3072 costs ~15s.
+DEFAULT_RESOLUTION = 3072
+DEFAULT_OCTREE = 256
+
+
+def _client_id() -> str:
+    # The studio sets STUDIO_COMFY_TAG so a cancel can find and stop this prompt in
+    # ComfyUI's queue; killing this script alone leaves ComfyUI rendering it.
+    return os.environ.get("STUDIO_COMFY_TAG", "") + uuid.uuid4().hex
+
+
+def _post(path: str, payload: dict) -> dict:
+    req = urllib.request.Request(f"{COMFY}{path}", data=json.dumps(payload).encode(),
+                                 headers={"Content-Type": "application/json"}, method="POST")
+    with urllib.request.urlopen(req, timeout=120) as r:
+        return json.load(r)
+
+
+def _get(path: str) -> dict:
+    with urllib.request.urlopen(f"{COMFY}{path}", timeout=120) as r:
+        return json.load(r)
+
+
+def comfy_alive() -> bool:
+    try:
+        _get("/system_stats")
+        return True
+    except Exception:
+        return False
+
+
+def stage(src: str) -> str:
+    os.makedirs(COMFY_IN, exist_ok=True)
+    ext = os.path.splitext(src)[1] or ".png"
+    name = f"mesh3d_{uuid.uuid4().hex[:12]}{ext}"
+    shutil.copyfile(src, os.path.join(COMFY_IN, name))
+    return name
+
+
+def graph(src_name: str, resolution: int, octree: int, threshold: float,
+          steps: int, cfg: float, seed: int, crop: str) -> dict:
+    """ImageOnlyCheckpointLoader hands back MODEL, CLIP_VISION and VAE from the single
+    repackaged file, so there is no separate CLIP vision model to install.
+
+    There is no text prompt anywhere in this graph - the conditioning is derived purely
+    from the CLIP vision embedding of the reference image. Hunyuan3D is reconstructing
+    what it was shown, not illustrating a description.
+    """
+    return {
+        "1": {"class_type": "ImageOnlyCheckpointLoader", "inputs": {"ckpt_name": CKPT}},
+        "2": {"class_type": "LoadImage", "inputs": {"image": src_name}},
+        # crop="center" squares off a portrait reference. For a sprite already sitting on
+        # a clean background, "none" keeps the whole silhouette.
+        "3": {"class_type": "CLIPVisionEncode",
+              "inputs": {"clip_vision": ["1", 1], "image": ["2", 0], "crop": crop}},
+        "4": {"class_type": "Hunyuan3Dv2Conditioning",
+              "inputs": {"clip_vision_output": ["3", 0]}},
+        "5": {"class_type": "EmptyLatentHunyuan3Dv2",
+              "inputs": {"resolution": resolution, "batch_size": 1}},
+        "6": {"class_type": "KSampler",
+              "inputs": {"model": ["1", 0], "positive": ["4", 0], "negative": ["4", 1],
+                         "latent_image": ["5", 0], "seed": seed, "steps": steps,
+                         "cfg": cfg, "sampler_name": "euler", "scheduler": "normal",
+                         "denoise": 1.0}},
+        # num_chunks trades peak VRAM for time while the voxel field is decoded; 8000 is
+        # comfortable on a 16GB card at these resolutions.
+        "7": {"class_type": "VAEDecodeHunyuan3D",
+              "inputs": {"samples": ["6", 0], "vae": ["1", 2],
+                         "num_chunks": 8000, "octree_resolution": octree}},
+        "8": {"class_type": "VoxelToMeshBasic",
+              "inputs": {"voxel": ["7", 0], "threshold": threshold}},
+        "9": {"class_type": "SaveGLB",
+              "inputs": {"mesh": ["8", 0], "filename_prefix": "mesh3d/asset"}},
+    }
+
+
+def run(g: dict, timeout: int) -> list:
+    pid = _post("/prompt", {"prompt": g, "client_id": _client_id()}).get("prompt_id")
+    if not pid:
+        raise RuntimeError("ComfyUI rejected the graph")
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        hist = _get(f"/history/{pid}")
+        if pid in hist:
+            entry = hist[pid]
+            st = entry.get("status", {})
+            if st.get("status_str") == "error":
+                raise RuntimeError(
+                    f"ComfyUI job failed: {json.dumps(st.get('messages', []))[:600]}")
+            out = []
+            for node in entry.get("outputs", {}).values():
+                for key in ("3d", "gltf", "mesh", "result", "files", "images"):
+                    for f in node.get(key, []) or []:
+                        if isinstance(f, dict) and f.get("filename"):
+                            out.append(f)
+            return out
+        time.sleep(1.5)
+    raise RuntimeError(f"timed out after {timeout}s")
+
+
+def newest_glb(since: float) -> str | None:
+    """SaveGLB is a terminal node and does not always report its file in /history, so
+    fall back to the newest .glb written under the output tree after the job started."""
+    best, best_t = None, since
+    for root, _dirs, files in os.walk(COMFY_OUT):
+        for fn in files:
+            if fn.lower().endswith(".glb"):
+                p = os.path.join(root, fn)
+                try:
+                    t = os.path.getmtime(p)
+                except OSError:
+                    continue
+                if t >= best_t:
+                    best, best_t = p, t
+    return best
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="Image -> 3D mesh (Hunyuan3D 2.1).")
+    ap.add_argument("--in", dest="src", required=True, help="Reference image.")
+    ap.add_argument("--out", required=True, help="Output .glb")
+    ap.add_argument("--resolution", type=int, default=DEFAULT_RESOLUTION,
+                    help="shape latent tokens (node default 3072; far lower gives an empty mesh)")
+    ap.add_argument("--octree", type=int, default=DEFAULT_OCTREE)
+    ap.add_argument("--threshold", type=float, default=0.6)
+    ap.add_argument("--steps", type=int, default=30)
+    ap.add_argument("--cfg", type=float, default=5.0)
+    ap.add_argument("--crop", default="center", choices=["center", "none"])
+    ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--timeout", type=int, default=1800)
+    a = ap.parse_args()
+
+    if not os.path.isfile(a.src):
+        print(f"error: not found: {a.src}", file=sys.stderr)
+        return 2
+    if not comfy_alive():
+        print(f"error: ComfyUI not reachable at {COMFY}", file=sys.stderr)
+        return 4
+
+    name = stage(a.src)
+    seed = a.seed or int(time.time()) % 2_000_000_000
+    started = time.time() - 2          # small slack for clock/mtime granularity
+    print(json.dumps({"stage": "start", "resolution": a.resolution,
+                      "octree": a.octree, "steps": a.steps, "seed": seed}), flush=True)
+    try:
+        run(graph(name, a.resolution, a.octree, a.threshold, a.steps, a.cfg,
+                  seed, a.crop), a.timeout)
+        src = newest_glb(started)
+        if not src:
+            raise RuntimeError("job finished but no .glb appeared in ComfyUI's output")
+        os.makedirs(os.path.dirname(os.path.abspath(a.out)) or ".", exist_ok=True)
+        shutil.copyfile(src, a.out)
+    except Exception as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    finally:
+        try:
+            os.remove(os.path.join(COMFY_IN, name))
+        except OSError:
+            pass
+
+    print(json.dumps({"stage": "done", "out": a.out, "seed": seed,
+                      "bytes": os.path.getsize(a.out),
+                      "seconds": round(time.time() - started, 1)}))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+```
+
+## File 32 of 32 — `%USERPROFILE%\.claude\skills\local-tts\scripts\enhance_audio.py`
+
+```python
+#!/usr/bin/env python3
+"""local-tts: clean up a speech recording with DeepFilterNet.
+
+Denoises and de-reverberates full-band (48kHz) speech. Run inside the `enhance`
+conda env — it pins torch/torchaudio 2.1.2 because DeepFilterNet 0.5.6 imports
+`torchaudio.backend.common`, which newer torchaudio removed.
+
+Why this is in the studio: Voice Studio (XTTS fine-tuning) and Chatterbox cloning
+both take their quality straight from the reference clip, which is whatever mic and
+room the user had. A denoise pass on upload improves every clone downstream, and
+costs nothing at inference time.
+
+  enhance_audio.py IN.wav --out OUT.wav [--mix 1.0] [--keep-rate]
+  enhance_audio.py --serve          persistent worker (newline JSON on stdin)
+
+CPU-only by design: these are 5-30 second reference clips, not batches, and keeping
+it off the GPU means it can run while a model is resident without evicting it.
+
+Exit codes: 0 ok · 1 error · 2 bad args.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
+DF_RATE = 48000          # DeepFilterNet is a full-band model; it only runs at 48k
+
+
+def _load_model():
+    from df.enhance import init_df
+    model, state, _ = init_df()
+    return model, state
+
+
+def _process(model, state, src: str, dst: str, mix: float, keep_rate: bool) -> dict:
+    """Enhance one file. Returns a small report the caller can show."""
+    import torch
+    import torchaudio
+    from df.enhance import enhance
+    from df.io import load_audio, save_audio
+
+    audio, meta = load_audio(src, sr=state.sr())
+    in_rate = getattr(meta, "sample_rate", DF_RATE)
+    clean = enhance(model, state, audio)
+
+    # mix < 1 blends the original back in. Aggressive denoising can thin a voice out;
+    # for a cloning reference a little room tone often clones better than a scrubbed,
+    # artefacted signal, so the caller gets to choose rather than being given one answer.
+    if mix < 1.0:
+        n = min(clean.shape[-1], audio.shape[-1])
+        clean = clean[..., :n] * mix + audio[..., :n] * (1.0 - mix)
+
+    out_rate = state.sr()
+    if keep_rate and in_rate and in_rate != state.sr():
+        clean = torchaudio.functional.resample(clean, state.sr(), in_rate)
+        out_rate = in_rate
+
+    os.makedirs(os.path.dirname(os.path.abspath(dst)) or ".", exist_ok=True)
+    save_audio(dst, clean, sr=out_rate)
+
+    def rms_db(x):
+        import math
+        v = float(torch.sqrt(torch.mean(x.float() ** 2)))
+        return round(20 * math.log10(max(v, 1e-9)), 2)
+
+    return {"out": dst, "sample_rate": out_rate,
+            "seconds": round(clean.shape[-1] / out_rate, 2),
+            "in_db": rms_db(audio), "out_db": rms_db(clean), "mix": mix}
+
+
+def serve() -> int:
+    """Persistent worker: load once, then handle {"in":..,"out":..,"mix":..} lines."""
+    real = os.dup(1)
+    os.dup2(2, 1)                       # library chatter to stderr; stdout is protocol
+    proto = os.fdopen(real, "w", buffering=1, encoding="utf-8", errors="replace")
+
+    def reply(obj):
+        proto.write(json.dumps(obj) + "\n")
+        proto.flush()
+
+    try:
+        model, state = _load_model()
+    except Exception as e:
+        reply({"error": f"load failed: {e}"})
+        return 1
+    reply({"ready": True})
+
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            req = json.loads(line)
+            rep = _process(model, state, req["in"], req["out"],
+                           float(req.get("mix", 1.0)), bool(req.get("keep_rate", False)))
+            reply({"ok": True, **rep})
+        except Exception as e:
+            reply({"error": str(e)})
+    return 0
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="Denoise / de-reverb speech (DeepFilterNet).")
+    ap.add_argument("audio", nargs="?", help="Input wav/mp3/flac.")
+    ap.add_argument("--out", help="Output wav.")
+    ap.add_argument("--mix", type=float, default=1.0,
+                    help="1.0 = fully enhanced, 0.5 = half-blended with the original.")
+    ap.add_argument("--keep-rate", action="store_true",
+                    help="Resample back to the input rate instead of leaving it at 48k.")
+    ap.add_argument("--serve", action="store_true", help="Persistent worker mode.")
+    a = ap.parse_args()
+
+    if a.serve:
+        return serve()
+    if not a.audio or not a.out:
+        print("error: need INPUT and --out (or --serve)", file=sys.stderr)
+        return 2
+    if not os.path.isfile(a.audio):
+        print(f"error: not found: {a.audio}", file=sys.stderr)
+        return 2
+    if not 0.0 <= a.mix <= 1.0:
+        print("error: --mix must be between 0 and 1", file=sys.stderr)
+        return 2
+
+    try:
+        model, state = _load_model()
+        rep = _process(model, state, a.audio, a.out, a.mix, a.keep_rate)
+    except Exception as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    print(json.dumps(rep))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
 ```
