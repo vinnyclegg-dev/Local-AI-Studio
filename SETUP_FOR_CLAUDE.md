@@ -1414,7 +1414,7 @@ missing"*, env #5 in PHASE 3 was not created.
 **NOT used by the studio — do NOT install (these are leftovers from unrelated experiments):**
 - `qwen3.5:9b` (appears in the studio's stop-list but is never mapped to a task).
 - Any GGUF chat models (e.g. Qwen2.5-Coder-14B-GGUF, DeepSeek-R1-Distill-Qwen-14B-GGUF).
-- The `ace` / `ace_step` conda envs, the standalone ACE-Step repo (`c:\AI Env\ACE-Step`), and the old
+- The `ace` / `ace_step` conda envs, a standalone ACE-Step repo clone, and the old
   v1 checkpoint `ace_step_v1_3.5b.safetensors` — the Music tab uses the **ACE-Step 1.5 split files**
   from PHASE 5g instead.
 - FLUX.1-schnell (`flux1-schnell-fp8.safetensors`) — the studio uses FLUX.2 Klein, not schnell.
